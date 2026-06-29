@@ -1326,7 +1326,7 @@ function renderInstallments(){
         <span>סה"כ רכישה: ₪${inst.total.toLocaleString('he-IL')}</span>
         <span>${pct}% שולם</span>
       </div>
-      ${inst.active?`<button onclick="deleteInstallment('${inst.id}')" style="margin-top:.5rem;width:100%;padding:7px;background:#fee2e2;color:var(--danger);border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:'Heebo',sans-serif;">🗑️ בטל תשלומים</button>`:''}
+      <button onclick="window.deleteInstallment('${inst.id}')" style="margin-top:.6rem;width:100%;padding:9px;background:#fee2e2;color:var(--danger);border:1.5px solid #fca5a5;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;font-family:'Heebo',sans-serif;">🗑️ ${inst.active?'בטל תשלומים':'מחק מהרשימה'}</button>
     </div>`;
   }).join('');
 }
@@ -1334,42 +1334,43 @@ function renderInstallments(){
 async function deleteInstallment(id){
   const inst=state.installments.find(i=>i.id===id);
   if(!inst)return;
-  // מחיקה מלאה — גם מה-Firebase וגם הוצאות עתידיות
-  const choices=['בטל תשלומים עתידיים בלבד','מחק לגמרי (כולל תשלומים שכבר נרשמו)'];
-  const choice=confirm(`בטל תוכנית התשלומים "${inst.name}"?\n\nלחץ אישור — לבטל תשלומים עתידיים בלבד\nלחץ ביטול — השאר הכל`);
-  if(!choice)return;
 
-  // סמן כלא פעיל
+  if(!inst.active){
+    // הסתיים — רק מחק מהרשימה המקומית
+    if(!confirm(`למחוק את "${inst.name}" מהרשימה?`))return;
+    await db.ref(`budget/installments/${id}`).remove();
+    state.installments=state.installments.filter(i=>i.id!==id);
+    renderInstallments();
+    showToast('✅ נמחק מהרשימה');
+    return;
+  }
+
+  // פעיל — בטל תשלומים עתידיים
+  if(!confirm(`לבטל את תוכנית התשלומים "${inst.name}"?\nתשלומים שכבר נרשמו יישארו.`))return;
+
   inst.active=false;
   await db.ref(`budget/installments/${id}`).update({active:false});
 
-  // מחק תשלומים עתידיים (חודש נוכחי ומעלה שעדיין לא שולמו)
-  const paidSoFar=inst.paidCount;
-  const allMonths=[];
+  // מחק תשלומים עתידיים מ-Firebase
   const [sy,sm]=inst.startMonth.split('-').map(Number);
-  for(let i=0;i<inst.count;i++){
+  const updates={};
+  for(let i=inst.paidCount;i<inst.count;i++){
     let y=sy,m=sm+i;
     while(m>12){m-=12;y++;}
-    allMonths.push(`${y}-${String(m).padStart(2,'0')}`);
-  }
-  // מחק רק חודשים שטרם שולמו (אחרי paidCount)
-  const futurMonths=allMonths.slice(paidSoFar);
-  const updates={};
-  futurMonths.forEach(mk=>{
+    const mk=`${y}-${String(m).padStart(2,'0')}`;
     updates[`budget/months/${mk}/expenses/inst_${id}_${mk}`]=null;
-  });
+  }
   if(Object.keys(updates).length)await db.ref().update(updates);
 
-  // עדכן רשימה מקומית
   state.installments=state.installments.map(i=>i.id===id?{...i,active:false}:i);
 
-  // רענן הוצאות החודש הנוכחי
+  // רענן הוצאות
   const snap=await db.ref(`budget/months/${state.currentMonth}/expenses`).once('value');
-  state.expenses=snap.exists()?Object.entries(snap.val()).map(([id,e])=>({...e,id})):[];
+  state.expenses=snap.exists()?Object.entries(snap.val()).map(([eid,e])=>({...e,id:eid})):[];
 
   renderInstallments();
   render();
-  showToast(`✅ תוכנית התשלומים "${inst.name}" בוטלה`);
+  showToast(`✅ תוכנית "${inst.name}" בוטלה`);
 }
 window.deleteInstallment=deleteInstallment;
 window.deleteExpense=deleteExpense;
