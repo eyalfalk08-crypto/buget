@@ -51,7 +51,7 @@ body{font-family:'Heebo',sans-serif;background:var(--bg);color:var(--text);min-h
 .ai-input-wrap input::placeholder{color:#a78bfa;}
 .ai-send-btn{background:linear-gradient(135deg,var(--credit),#7c3aed);color:white;border:none;padding:10px 14px;font-size:18px;cursor:pointer;transition:opacity .2s;}
 .ai-send-btn:active{opacity:.8;}
-.ai-send-btn.loading{opacity:.6;pointer-events:none;}
+.ai-send-btn:hover{opacity:.85;}
 .ai-result{margin-top:.5rem;background:white;border-radius:10px;padding:.8rem 1rem;font-size:13px;color:var(--text);box-shadow:var(--shadow);display:none;border-right:3px solid var(--credit);}
 .tabs{display:flex;gap:4px;padding:.6rem 1rem .3rem;overflow-x:auto;scrollbar-width:none;background:white;border-bottom:1px solid var(--border);}
 .tabs::-webkit-scrollbar{display:none;}
@@ -735,52 +735,84 @@ function openCatDetail(cat){
   document.getElementById('cat-detail-modal').classList.add('open');
 }
 
-// AI Free Text Parsing
-async function aiParse(){
+// AI Free Text Parsing — smart local parser, no API needed
+const CAT_KEYWORDS={
+  food:['סופר','אוכל','מזון','מסעדה','קפה','שתייה','ירקות','פירות','בשר','לחם','קניות','רמי לוי','שופרסל','מגה','ויקטורי','טיב טעם','קצביה','פלאפל','פיצה','סושי','מקדונלד','ברגר','קינג','קפטן'],
+  transport:['דלק','בנזין','רכב','מונית','אוטובוס','רכבת','חניה','טסט','ביטוח רכב','שמן','גלגל','צמיג','גראז','מוסך','אובר','גט','bolt','waze'],
+  housing:['שכירות','ארנונה','חשמל','מים','גז','אינטרנט','טלפון','ועד','ריהוט','תיקון','שיפוץ','ניקיון','מנקה','ביטוח דירה','משכנתא','שכר דירה'],
+  health:['רופא','תרופה','בית מרקחת','מרפאה','ניתוח','בדיקה','שיניים','אופטיקה','מרפא','פסיכולוג','קופת חולים','מאוחדת','מכבי','כללית','לאומית','ויטמין'],
+  fun:['קולנוע','סרט','בילוי','פארק','הופעה','קונצרט','ספר','משחק','נסיעה','טיול','מלון','חופשה','ספורט','כדורגל','שחייה','כושר','gym','נטפליקס','ספוטיפיי','דיסני'],
+  other:['מתנה','בגדים','הלבשה','נעליים','תספורת','מספרה','קוסמטיקה','כלי עבודה','מכשיר','אלקטרוניקה','מחשב','טלפון','מסך'],
+};
+
+function smartParse(text){
+  const t=text.toLowerCase();
+  // Extract amount — look for numbers (with optional ₪/ש"ח/שקל)
+  const numMatch=t.match(/(\d+[\d,.]*)/);
+  const amount=numMatch?parseFloat(numMatch[1].replace(',','')):null;
+  if(!amount||amount<=0)return null;
+
+  // Detect payment type
+  let payType='cash';
+  if(/אשראי|כרטיס|ויזה|מסטרקארד|credit|קרדיט/.test(t))payType='credit';
+  if(/מזומן|מזומ|עו"ש|עובר|העברה|ביט|bit|paybox|פייבוקס/.test(t))payType='cash';
+
+  // Score each category by keyword matches
+  let bestCatId=state.categories[0]?.id||'other';
+  let bestScore=0;
+  for(const [catId,keywords] of Object.entries(CAT_KEYWORDS)){
+    let score=0;
+    for(const kw of keywords){if(t.includes(kw))score++;}
+    if(score>bestScore){
+      // Check if this category exists in user's list
+      const exists=state.categories.find(c=>c.id===catId);
+      if(exists){bestScore=score;bestCatId=catId;}
+    }
+  }
+  // If no keyword matched, try matching against category names
+  if(bestScore===0){
+    for(const cat of state.categories){
+      if(t.includes(cat.name.toLowerCase())||t.includes(cat.emoji)){
+        bestCatId=cat.id;break;
+      }
+    }
+  }
+
+  // Build description: remove numbers and payment words, keep the rest
+  let desc=text
+    .replace(/\d+[\d,.]*/g,'')
+    .replace(/שקל|ש"ח|₪|שח/g,'')
+    .replace(/הוצאתי|שילמתי|קניתי|שלמתי|עלה לי|עלה|על|ב|ל|מ|ה|ו|את/g,' ')
+    .replace(/\s+/g,' ').trim();
+  if(!desc||desc.length<2)desc=state.categories.find(c=>c.id===bestCatId)?.name||'הוצאה';
+
+  return{amount,catId:bestCatId,desc,payType};
+}
+
+function aiParse(){
   const text=document.getElementById('ai-input').value.trim();
   if(!text)return;
-  const btn=document.getElementById('ai-send-btn');
-  btn.textContent='⏳';btn.classList.add('loading');
   const resultEl=document.getElementById('ai-result');
   resultEl.style.display='none';
-  const catList=state.categories.map(c=>`${c.id}: ${c.name} (${c.emoji})`).join(', ');
-  const prompt=`אתה עוזר לתקציב משפחתי. המשתמש כתב בעברית: "${text}"
-הקטגוריות הזמינות: ${catList}.
-ענה אך ורק ב-JSON תקין בצורה הבאה (ללא שום טקסט אחר):
-{"amount": <מספר>, "catId": "<id קטגוריה>", "desc": "<תיאור קצר בעברית>", "payType": "cash" או "credit", "confidence": <0-1>}
-אם לא ניתן להבין, החזר {"error": "לא הצלחתי להבין"}`;
-  try{
-    const res=await fetch('https://api.anthropic.com/v1/messages',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:200,messages:[{role:'user',content:prompt}]})
-    });
-    const data=await res.json();
-    const raw=data.content?.[0]?.text||'{}';
-    let parsed;
-    try{parsed=JSON.parse(raw.replace(/```json|```/g,'').trim());}catch(e){parsed={error:'שגיאה בניתוח'};}
-    btn.textContent='✨';btn.classList.remove('loading');
-    if(parsed.error||!parsed.amount){
-      resultEl.style.display='block';
-      resultEl.innerHTML=`<span style="color:var(--danger)">❌ ${parsed.error||'לא הצלחתי להבין. נסה להיות יותר ספציפי.'}</span>`;
-      return;
-    }
-    const cat=state.categories.find(c=>c.id===parsed.catId)||state.categories[0];
-    pendingAiExpense={amount:parsed.amount,catId:cat.id,desc:parsed.desc,payType:parsed.payType||'cash'};
-    document.getElementById('ai-confirm-box').innerHTML=`
-      <div class="ai-cf-title">📋 פרטי ההוצאה שזוהתה</div>
-      <div class="ai-cf-row"><span>סכום:</span><span>₪${parsed.amount.toLocaleString('he-IL')}</span></div>
-      <div class="ai-cf-row"><span>קטגוריה:</span><span>${cat.emoji} ${cat.name}</span></div>
-      <div class="ai-cf-row"><span>תיאור:</span><span>${parsed.desc}</span></div>
-      <div class="ai-cf-row"><span>תשלום:</span><span>${parsed.payType==='credit'?'💳 אשראי':'💵 מזומן/עו"ש'}</span></div>
-    `;
-    document.getElementById('ai-confirm-modal').classList.add('open');
-    document.getElementById('ai-input').value='';
-  }catch(e){
-    btn.textContent='✨';btn.classList.remove('loading');
+
+  const parsed=smartParse(text);
+  if(!parsed){
     resultEl.style.display='block';
-    resultEl.innerHTML=`<span style="color:var(--danger)">❌ שגיאת חיבור. בדוק אינטרנט.</span>`;
+    resultEl.innerHTML=`<span style="color:var(--danger)">❌ לא הצלחתי למצוא סכום. נסה: "שילמתי 150 שקל על דלק"</span>`;
+    return;
   }
+  const cat=state.categories.find(c=>c.id===parsed.catId)||state.categories[0];
+  pendingAiExpense={amount:parsed.amount,catId:cat.id,desc:parsed.desc,payType:parsed.payType};
+  document.getElementById('ai-confirm-box').innerHTML=`
+    <div class="ai-cf-title">📋 פרטי ההוצאה שזוהתה</div>
+    <div class="ai-cf-row"><span>סכום:</span><span>₪${parsed.amount.toLocaleString('he-IL')}</span></div>
+    <div class="ai-cf-row"><span>קטגוריה:</span><span>${cat.emoji} ${cat.name}</span></div>
+    <div class="ai-cf-row"><span>תיאור:</span><span>${parsed.desc}</span></div>
+    <div class="ai-cf-row"><span>תשלום:</span><span>${parsed.payType==='credit'?'💳 אשראי':'💵 מזומן/עו"ש'}</span></div>
+    <div style="font-size:11px;color:var(--text-muted);margin-top:.5rem;">לא מדויק? אפשר לשנות ידנית בטופס למטה.</div>
+  `;
+  document.getElementById('ai-confirm-modal').classList.add('open');
+  document.getElementById('ai-input').value='';
 }
 
 async function confirmAiExpense(){
