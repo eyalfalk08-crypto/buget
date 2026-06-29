@@ -216,6 +216,7 @@ body{font-family:'Heebo',sans-serif;background:var(--bg);color:var(--text);min-h
   <button class="tab-btn active" onclick="switchTab('overview')">סקירה</button>
   <button class="tab-btn" onclick="switchTab('expenses')">הוצאות</button>
   <button class="tab-btn" onclick="switchTab('recurring')">קבועות</button>
+  <button class="tab-btn" onclick="switchTab('installments')">תשלומים 💳</button>
   <button class="tab-btn" onclick="switchTab('history')">היסטוריה</button>
   <button class="tab-btn" onclick="switchTab('settings')">הגדרות</button>
 </div>
@@ -289,6 +290,47 @@ body{font-family:'Heebo',sans-serif;background:var(--bg);color:var(--text);min-h
     </div>
     <div class="section-title">רשימת הוצאות קבועות</div>
     <div id="recurring-list"></div>
+  </div>
+
+  <!-- INSTALLMENTS -->
+  <div id="tab-installments" style="display:none;">
+    <div class="section-title">הוצאות בתשלומים</div>
+    <p style="font-size:12px;color:var(--text-muted);margin-bottom:.8rem;">הגדר רכישה בתשלומים — הסכום יחולק אוטומטית ויירד <span style="color:var(--credit);font-weight:700;">💳 מהאשראי</span> כל חודש</p>
+    <div class="card">
+      <div class="form-group" style="margin-bottom:.5rem;">
+        <label>שם הרכישה</label>
+        <input type="text" id="inst-name" placeholder="טלפון, רהיטים, חשמל...">
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>סכום כולל (₪)</label>
+          <input type="number" id="inst-total" placeholder="0" inputmode="numeric" oninput="calcInstallment()">
+        </div>
+        <div class="form-group">
+          <label>מספר תשלומים</label>
+          <input type="number" id="inst-count" placeholder="12" inputmode="numeric" min="2" max="72" oninput="calcInstallment()">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>קטגוריה</label>
+          <select id="inst-cat"></select>
+        </div>
+        <div class="form-group">
+          <label>יום חיוב בחודש</label>
+          <input type="number" id="inst-day" placeholder="1" min="1" max="28" value="1">
+        </div>
+      </div>
+      <!-- Live preview -->
+      <div id="inst-preview" style="display:none;background:#ede9fe;border-radius:10px;padding:.7rem 1rem;margin-bottom:.6rem;font-size:13px;">
+        <div style="font-weight:700;color:var(--credit);margin-bottom:2px;">📋 תצוגה מקדימה</div>
+        <div id="inst-preview-text"></div>
+      </div>
+      <button class="add-btn" style="background:linear-gradient(135deg,var(--credit),#7c3aed);" onclick="addInstallment()">➕ הוסף תשלומים</button>
+    </div>
+
+    <div class="section-title">תשלומים פעילים</div>
+    <div id="installments-list"></div>
   </div>
 
   <!-- HISTORY -->
@@ -497,14 +539,39 @@ async function loadData(){
   state.income=data.income||{me:0,wife:0};
   state.categories=data.categories?Object.values(data.categories):DEFAULT_CATS;
   state.recurring=data.recurring?Object.entries(data.recurring).map(([id,r])=>({...r,id})):[];
+  state.installments=data.installments?Object.values(data.installments):[];
   state.balance=data.balance||{cash:0,creditLimit:0};
   if(!data.categories)await db.ref('budget/categories').set(Object.fromEntries(DEFAULT_CATS.map(c=>[c.id,c])));
+
+  // ── בדיקת מעבר חודש אוטומטי ──────────────────────────────
+  const realCurrentMonth=getBudgetMonthKey(new Date());
+  const lastSeenMonth=data.lastSeenMonth||null;
+
+  if(lastSeenMonth&&lastSeenMonth!==realCurrentMonth){
+    // חודש חדש! עדכן Firebase ועבור אוטומטית
+    await db.ref('budget/lastSeenMonth').set(realCurrentMonth);
+    state.currentMonth=realCurrentMonth;
+    document.getElementById('month-sel').value=realCurrentMonth;
+    // הצג הודעת מעבר חודש
+    setTimeout(()=>{
+      showToast(`🗓️ ברוך הבא לחודש החדש! הוצאות חודש ${MONTHS_HE[parseInt(lastSeenMonth.split('-')[1])-1]} נשמרו בהיסטוריה`);
+      _fireNotif('🗓️ חודש חדש התחיל!',`הוצאות ${MONTHS_HE[parseInt(lastSeenMonth.split('-')[1])-1]} נשמרו. הוצאות קבועות ותשלומים יורדו אוטומטית.`);
+    },1200);
+  } else {
+    // אותו חודש — שמור lastSeenMonth אם לא קיים
+    if(!lastSeenMonth)await db.ref('budget/lastSeenMonth').set(realCurrentMonth);
+    state.currentMonth=realCurrentMonth;
+    document.getElementById('month-sel').value=realCurrentMonth;
+  }
+  // ──────────────────────────────────────────────────────────
+
   await loadMonthData();
   document.getElementById('loading').style.display='none';
 }
 
 async function loadMonthData(){
   await applyRecurring();
+  await applyInstallmentsForMonth();
   const snap=await db.ref(`budget/months/${state.currentMonth}/expenses`).once('value');
   state.expenses=snap.exists()?Object.entries(snap.val()).map(([id,e])=>({...e,id})):[];
   render();
@@ -612,6 +679,8 @@ function renderCatSelect(){
   const opts=state.categories.map(c=>`<option value="${c.id}">${c.emoji||''} ${c.name}</option>`).join('');
   document.getElementById('exp-cat').innerHTML=opts;
   document.getElementById('rec-cat').innerHTML=opts;
+  const instCat=document.getElementById('inst-cat');
+  if(instCat)instCat.innerHTML=opts;
 }
 
 function renderCatManage(){
@@ -1115,21 +1184,174 @@ async function confirmResetMonth(){
 }
 
 
-function showToast(msg){
+// ── INSTALLMENTS — תשלומים ────────────────────────────────────
+
+function renderInstallmentCatSelect(){
+  const opts=state.categories.map(c=>`<option value="${c.id}">${c.emoji||''} ${c.name}</option>`).join('');
+  const sel=document.getElementById('inst-cat');
+  if(sel)sel.innerHTML=opts;
+}
+
+function calcInstallment(){
+  const total=parseFloat(document.getElementById('inst-total').value)||0;
+  const count=parseInt(document.getElementById('inst-count').value)||0;
+  const preview=document.getElementById('inst-preview');
+  const previewText=document.getElementById('inst-preview-text');
+  if(total>0&&count>1){
+    const monthly=Math.ceil(total/count);
+    preview.style.display='block';
+    previewText.innerHTML=`₪${monthly.toLocaleString('he-IL')} לחודש × ${count} חודשים = ₪${(monthly*count).toLocaleString('he-IL')} סה"כ`;
+  } else {
+    preview.style.display='none';
+  }
+}
+
+async function addInstallment(){
+  const name=document.getElementById('inst-name').value.trim();
+  const total=parseFloat(document.getElementById('inst-total').value);
+  const count=parseInt(document.getElementById('inst-count').value);
+  const catId=document.getElementById('inst-cat').value;
+  const day=parseInt(document.getElementById('inst-day').value)||1;
+  if(!name){showToast('יש להכניס שם לרכישה');return;}
+  if(!total||total<=0){showToast('יש להכניס סכום');return;}
+  if(!count||count<2){showToast('מספר תשלומים חייב להיות לפחות 2');return;}
+
+  const monthly=Math.ceil(total/count);
+  // Start from current month
+  const [y,m]=state.currentMonth.split('-').map(Number);
+  const startDate=new Date(y,m-1,1);
+
+  const id='inst_'+Date.now();
+  const inst={
+    id,name,total,count,monthly,catId,day,
+    startMonth:state.currentMonth,
+    paidCount:0,
+    active:true,
+    createdTs:Date.now()
+  };
+
+  state.installments=state.installments||[];
+  state.installments.push(inst);
+  await db.ref(`budget/installments/${id}`).set(inst);
+
+  // Apply first payment immediately to current month
+  await applyInstallmentPayment(inst,state.currentMonth,1);
+
+  document.getElementById('inst-name').value='';
+  document.getElementById('inst-total').value='';
+  document.getElementById('inst-count').value='';
+  document.getElementById('inst-preview').style.display='none';
+  renderInstallments();
+  showToast(`✅ "${name}" — ${count} תשלומים של ₪${monthly.toLocaleString('he-IL')}`);
+}
+
+async function applyInstallmentPayment(inst,monthKey,paymentNum){
+  const expId=`inst_${inst.id}_${monthKey}`;
+  const [y,m]=monthKey.split('-').map(Number);
+  const ts=new Date(y,m-1,Math.min(inst.day,28),9,0,0).getTime();
+  const isLast=paymentNum===inst.count;
+  const desc=`${inst.name} — תשלום ${paymentNum}/${inst.count}${isLast?' (אחרון!)':''}`;
+  await db.ref(`budget/months/${monthKey}/expenses/${expId}`).set({
+    amount:inst.monthly,catId:inst.catId,desc,ts,
+    payType:'credit',installmentId:inst.id,paymentNum,isLast
+  });
+  // Update paidCount
+  await db.ref(`budget/installments/${inst.id}/paidCount`).set(paymentNum);
+  if(isLast){
+    await db.ref(`budget/installments/${inst.id}/active`).set(false);
+    _fireNotif(`✅ תשלומים הסתיימו!`,`"${inst.name}" — כל ${inst.count} התשלומים שולמו. סה"כ ₪${inst.total.toLocaleString('he-IL')}`);
+  }
+}
+
+async function applyInstallmentsForMonth(){
+  if(!state.installments||!state.installments.length)return;
+  const activeInst=state.installments.filter(i=>i.active&&i.paidCount<i.count);
+  for(const inst of activeInst){
+    const expId=`inst_${inst.id}_${state.currentMonth}`;
+    const snap=await db.ref(`budget/months/${state.currentMonth}/expenses/${expId}`).once('value');
+    if(snap.exists())continue; // already applied
+    // Check if this month is >= start month
+    if(state.currentMonth<inst.startMonth)continue;
+    const paymentNum=inst.paidCount+1;
+    if(paymentNum>inst.count)continue;
+    await applyInstallmentPayment(inst,state.currentMonth,paymentNum);
+    // Update local state
+    inst.paidCount=paymentNum;
+    if(paymentNum>=inst.count)inst.active=false;
+  }
+}
+
+function renderInstallments(){
+  const list=document.getElementById('installments-list');
+  if(!list)return;
+  const insts=state.installments||[];
+  if(!insts.length){
+    list.innerHTML='<div class="empty"><div class="ei">💳</div><p>אין תשלומים פעילים</p></div>';
+    return;
+  }
+  // Sort: active first
+  const sorted=[...insts].sort((a,b)=>(b.active?1:0)-(a.active?1:0)||b.createdTs-a.createdTs);
+  list.innerHTML=sorted.map(inst=>{
+    const cat=state.categories.find(c=>c.id===inst.catId)||{name:'שונות',emoji:'📦'};
+    const pct=Math.round(inst.paidCount/inst.count*100);
+    const remaining=inst.count-inst.paidCount;
+    const remainingAmount=(remaining*inst.monthly).toLocaleString('he-IL');
+    const statusColor=inst.active?'var(--credit)':'var(--primary)';
+    const statusText=inst.active?`נותרו ${remaining} תשלומים · ₪${remainingAmount}`:'✅ הושלם';
+    return`<div class="card" style="margin-bottom:.6rem;border-right:4px solid ${statusColor};padding:.9rem;">
+      <div style="display:flex;align-items:center;gap:.6rem;margin-bottom:.5rem;">
+        <div style="font-size:20px;">${cat.emoji}</div>
+        <div style="flex:1;">
+          <div style="font-size:13px;font-weight:700;">${inst.name}</div>
+          <div style="font-size:11px;color:var(--text-muted);">${cat.name} · יום ${inst.day} בחודש</div>
+        </div>
+        <div style="text-align:left;">
+          <div style="font-size:16px;font-weight:900;color:${statusColor};">₪${inst.monthly.toLocaleString('he-IL')}</div>
+          <div style="font-size:10px;color:var(--text-muted);">לחודש</div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);margin-bottom:4px;">
+        <span>${inst.paidCount}/${inst.count} תשלומים</span>
+        <span>${statusText}</span>
+      </div>
+      <div style="background:var(--bg);border-radius:6px;height:6px;overflow:hidden;">
+        <div style="width:${pct}%;height:100%;background:${statusColor};border-radius:6px;transition:width .4s;"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-top:3px;">
+        <span>סה"כ רכישה: ₪${inst.total.toLocaleString('he-IL')}</span>
+        <span>${pct}% שולם</span>
+      </div>
+      ${inst.active?`<button onclick="deleteInstallment('${inst.id}')" style="margin-top:.5rem;width:100%;padding:7px;background:#fee2e2;color:var(--danger);border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:'Heebo',sans-serif;">🗑️ בטל תשלומים</button>`:''}
+    </div>`;
+  }).join('');
+}
+
+async function deleteInstallment(id){
+  if(!confirm('לבטל את תוכנית התשלומים? תשלומים שכבר נרשמו לא יימחקו.'))return;
+  state.installments=state.installments.filter(i=>i.id!==id);
+  await db.ref(`budget/installments/${id}`).update({active:false});
+  renderInstallments();
+  showToast('✅ תוכנית תשלומים בוטלה');
+}
+
+// ──────────────────────────────────────────────────────────────
+
+
   const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');
   setTimeout(()=>t.classList.remove('show'),3500);
 }
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 
 function switchTab(tab){
-  ['overview','expenses','recurring','history','settings'].forEach(t=>{
+  ['overview','expenses','recurring','installments','history','settings'].forEach(t=>{
     document.getElementById('tab-'+t).style.display=t===tab?'block':'none';
   });
   document.querySelectorAll('.tab-btn').forEach((btn,i)=>{
-    btn.classList.toggle('active',['overview','expenses','recurring','history','settings'][i]===tab);
+    btn.classList.toggle('active',['overview','expenses','recurring','installments','history','settings'][i]===tab);
   });
   if(tab==='history')renderHistory();
   if(tab==='settings')updateNotifUI();
+  if(tab==='installments'){renderInstallmentCatSelect();renderInstallments();}
 }
 
 document.querySelectorAll('.modal').forEach(m=>{
