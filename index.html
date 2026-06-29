@@ -1130,64 +1130,40 @@ document.querySelectorAll('.modal').forEach(m=>{
   m.addEventListener('click',e=>{if(e.target===m)m.classList.remove('open');});
 });
 
-// ── NOTIFICATIONS — Web Push (עובד גם כשהאפליקציה סגורה) ──────
-const WORKER_URL='https://budget-push.eyalfalk08.workers.dev';
+// ── NOTIFICATIONS — OneSignal ──────────────────────────────────
+// ⬇️ עדכן את שני הערכים האלו מחשבון OneSignal שלך
+const ONESIGNAL_APP_ID = '57283ae2-38e3-4260-a5b1-fb95e59dd69e'; // App ID מ-OneSignal Dashboard
+const WORKER_URL = 'https://budget-push.eyalfalk08.workers.dev';   // Cloudflare Worker שלך
 
-// VAPID public key — חייב להתאים למה שמוגדר ב-Cloudflare Worker שלך
-// אם אין לך עדיין: צור ב- https://vapidkeys.com ועדכן כאן + ב-Worker
-const VAPID_PUBLIC_KEY='BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBkr3qBkYjTNfxzPnfxTjCE0M';
+let oneSignalInitDone = false;
 
-let swReg=null; // Service Worker registration
-
-// רישום SW משלנו (לא OneSignal)
-async function registerSW(){
-  if(!('serviceWorker' in navigator))return null;
-  try{
-    const reg=await navigator.serviceWorker.register('sw.js',{scope:'./'});
-    // אפשר גם OneSignal SW להמשיך לרוץ במקביל
-    swReg=reg;
-    return reg;
-  }catch(e){
-    console.warn('SW register failed:',e);
-    return null;
-  }
+// טעינה והפעלה של OneSignal SDK
+async function initOneSignal(){
+  if(oneSignalInitDone)return;
+  oneSignalInitDone = true;
+  return new Promise(resolve=>{
+    const script=document.createElement('script');
+    script.src='https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js';
+    script.defer=true;
+    script.onload=async()=>{
+      window.OneSignalDeferred=window.OneSignalDeferred||[];
+      OneSignalDeferred.push(async OS=>{
+        await OS.init({
+          appId: ONESIGNAL_APP_ID,
+          allowLocalhostAsSecureOrigin: true,
+          notifyButton: { enable: false }, // כפתור שלנו, לא שלהם
+          serviceWorkerPath: 'OneSignalSDKWorker.js',
+        });
+        resolve(OS);
+      });
+    };
+    document.head.appendChild(script);
+  });
 }
 
 function getNotifPermission(){
   if(!('Notification' in window))return'unsupported';
   return Notification.permission;
-}
-
-// המרת VAPID key מ-base64 ל-Uint8Array
-function urlBase64ToUint8Array(base64String){
-  const padding='='.repeat((4-base64String.length%4)%4);
-  const base64=(base64String+padding).replace(/-/g,'+').replace(/_/g,'/');
-  const raw=atob(base64);
-  return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));
-}
-
-async function subscribeToPush(reg){
-  try{
-    // בדוק אם כבר יש subscription
-    let sub=await reg.pushManager.getSubscription();
-    if(!sub){
-      sub=await reg.pushManager.subscribe({
-        userVisibleOnly:true,
-        applicationServerKey:urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
-      });
-    }
-    // שמור subscription ב-Firebase כדי ש-Worker ידע לאן לשלוח
-    const subJson=sub.toJSON();
-    await db.ref('budget/pushSubscriptions/'+btoa(subJson.endpoint).slice(0,40).replace(/[^a-zA-Z0-9]/g,'_')).set({
-      endpoint:subJson.endpoint,
-      keys:subJson.keys,
-      ts:Date.now()
-    });
-    return sub;
-  }catch(e){
-    console.warn('Push subscribe failed:',e);
-    return null;
-  }
 }
 
 function updateNotifUI(){
@@ -1213,7 +1189,7 @@ function updateNotifUI(){
   } else {
     btn.textContent='🔔 הפעל התראות';
     btn.className='notif-perm-btn';
-    status.textContent='לחץ כדי לאשר קבלת התראות לטלפון/מחשב';
+    status.textContent='לחץ כדי לאשר התראות לטלפון — גם כשהאפליקציה סגורה';
     testBox.style.display='none';
   }
 }
@@ -1223,20 +1199,20 @@ async function handleNotifBtn(){
   if(perm==='granted'){showToast('התראות כבר פעילות ✅');return;}
   if(perm==='denied'){showToast('התראות חסומות — שחרר בהגדרות הדפדפן');return;}
 
-  // בקש הרשאה
-  const result=await Notification.requestPermission();
-  updateNotifUI();
-  if(result!=='granted'){showToast('❌ לא אושר — אפשר בהגדרות הדפדפן');return;}
+  // הפעל OneSignal ובקש הרשאה
+  await initOneSignal();
+  const OS=await new Promise(r=>{ window.OneSignalDeferred=window.OneSignalDeferred||[]; OneSignalDeferred.push(r); });
+  try{
+    await OS.Notifications.requestPermission();
+  }catch(e){}
 
-  // רשום SW ו-subscribe ל-Push
-  const reg=swReg||await registerSW();
-  if(reg){
-    await subscribeToPush(reg);
-    showToast('✅ התראות הופעלו! תגיע התראה גם כשהאפליקציה סגורה');
+  const result=getNotifPermission();
+  updateNotifUI();
+  if(result==='granted'){
+    showToast('✅ התראות הופעלו! תגיע גם כשהאפליקציה סגורה');
     _fireNotif('💰 תקציב משפחתי','התראות הופעלו! תקבל עדכון על כל הוצאה.');
   } else {
-    showToast('✅ התראות הופעלו (דפדפן בלבד)');
-    _fireNotif('💰 תקציב משפחתי','התראות הופעלו!');
+    showToast('❌ לא אושר — אפשר בהגדרות הדפדפן');
   }
 }
 
@@ -1246,32 +1222,27 @@ async function sendTestNotif(){
 }
 
 async function _fireNotif(title,body){
-  // שכבה 1: Service Worker showNotification — עובד גם ברקע
-  const reg=swReg||('serviceWorker' in navigator?await navigator.serviceWorker.ready.catch(()=>null):null);
-  if(reg&&getNotifPermission()==='granted'){
+  // שכבה 1: Service Worker — עובד כשהטאב ברקע
+  if(getNotifPermission()==='granted'&&'serviceWorker' in navigator){
     try{
+      const reg=await navigator.serviceWorker.ready;
       await reg.showNotification(title,{
         body,dir:'rtl',lang:'he',tag:'budget-expense',renotify:true,
         vibrate:[200,100,200],
         icon:'https://cdn.jsdelivr.net/npm/emoji-datasource-apple/img/apple/64/1f4b0.png',
         badge:'https://cdn.jsdelivr.net/npm/emoji-datasource-apple/img/apple/64/1f514.png',
-        data:{url:location.href}
       });
-    }catch(e){
-      // fallback
-      if(getNotifPermission()==='granted')try{new Notification(title,{body,dir:'rtl',lang:'he'});}catch(_){}
+    }catch(_){
+      try{new Notification(title,{body,dir:'rtl',lang:'he'});}catch(_){}
     }
-  } else if(getNotifPermission()==='granted'){
-    try{new Notification(title,{body,dir:'rtl',lang:'he'});}catch(_){}
   }
 
-  // שכבה 2: Cloudflare Worker — שולח Push לכל ה-subscriptions השמורות ב-Firebase
-  // (כולל כשהאפליקציה סגורה לגמרי)
+  // שכבה 2: OneSignal REST API דרך Cloudflare Worker — עובד גם כשסגור לגמרי
   try{
     await fetch(WORKER_URL,{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({title,body})
+      body:JSON.stringify({title,body,appId:ONESIGNAL_APP_ID})
     });
   }catch(_){}
 }
@@ -1296,11 +1267,8 @@ function buildNotifMessage(amount,cat,catSpentAfter,payType){
   return{title,body};
 }
 
-// אתחול — רשום SW מיד בטעינה
-registerSW().then(reg=>{
-  if(reg)swReg=reg;
-  updateNotifUI();
-});
+// עדכן UI בטעינה
+updateNotifUI();
 // ─────────────────────────────────────────────────────────────
 
 loadData();
