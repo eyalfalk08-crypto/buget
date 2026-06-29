@@ -1,0 +1,34 @@
+{
+  "name": "תקציב משפחתי",
+  "short_name": "תקציב",
+  "description": "ניהול תקציב משפחתי",
+  "start_url": "/buget/",
+  "scope": "/buget/",
+  "display": "standalone",
+  "background_color": "#1b4332",
+  "theme_color": "#2d6a4f",
+  "dir": "rtl",
+  "lang": "he",
+  "icons": [
+    {
+      "src": "https://cdn.jsdelivr.net/npm/emoji-datasource-apple/img/apple/64/1f4b0.png",
+      "sizes": "64x64",
+      "type": "image/png"
+    },
+    {
+      "src": "https://cdn.jsdelivr.net/npm/emoji-datasource-apple/img/apple/72/1f4b0.png",
+      "sizes": "72x72",
+      "type": "image/png"
+    },
+    {
+      "src": "https://cdn.jsdelivr.net/npm/emoji-datasource-apple/img/apple/128/1f4b0.png",
+      "sizes": "128x128",
+      "type": "image/png"
+    },
+    {
+      "src": "https://cdn.jsdelivr.net/npm/emoji-datasource-apple/img/apple/160/1f4b0.png",
+      "sizes": "160x160",
+      "type": "image/png"
+    }
+  ]
+}
