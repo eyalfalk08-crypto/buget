@@ -6,12 +6,17 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>תקציב משפחתי</title>
-<link rel="manifest" href="manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="תקציב">
 <link rel="apple-touch-icon" href="https://cdn.jsdelivr.net/npm/emoji-datasource-apple/img/apple/64/1f4b0.png">
 <meta name="theme-color" content="#2d6a4f">
+<script>
+// Inject manifest dynamically — no separate file needed
+const manifest={name:'תקציב משפחתי',short_name:'תקציב',start_url:location.pathname,scope:location.pathname.replace(/[^/]*$/,''),display:'standalone',background_color:'#1b4332',theme_color:'#2d6a4f',dir:'rtl',lang:'he',icons:[{src:'https://cdn.jsdelivr.net/npm/emoji-datasource-apple/img/apple/64/1f4b0.png',sizes:'64x64',type:'image/png'},{src:'https://cdn.jsdelivr.net/npm/emoji-datasource-apple/img/apple/128/1f4b0.png',sizes:'128x128',type:'image/png'}]};
+const blob=new Blob([JSON.stringify(manifest)],{type:'application/manifest+json'});
+const link=document.createElement('link');link.rel='manifest';link.href=URL.createObjectURL(blob);document.head.appendChild(link);
+</script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
 <style>
@@ -1336,7 +1341,7 @@ async function deleteInstallment(id){
 
 // ──────────────────────────────────────────────────────────────
 
-
+function showToast(msg){
   const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');
   setTimeout(()=>t.classList.remove('show'),3500);
 }
