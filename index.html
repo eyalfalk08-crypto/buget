@@ -6,7 +6,6 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>תקציב משפחתי</title>
-<script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
 <style>
@@ -258,12 +257,8 @@ body{font-family:'Heebo',sans-serif;background:var(--bg);color:var(--text);min-h
   <!-- RECURRING -->
   <div id="tab-recurring" style="display:none;">
     <div class="section-title">הוצאות קבועות חודשיות</div>
-    <p style="font-size:12px;color:var(--text-muted);margin-bottom:.8rem;">הוצאות אלו יורדות אוטומטית מהיתרה בתחילת כל חודש</p>
+    <p style="font-size:12px;color:var(--text-muted);margin-bottom:.8rem;">הוצאות אלו יורדות אוטומטית <span style="font-weight:700;color:var(--credit);">💳 באשראי</span> בתחילת כל חודש</p>
     <div class="card">
-      <div class="pay-toggle">
-        <button class="pay-btn active-cash" id="rec-pay-cash-btn" onclick="setRecPayType('cash')">💵 מזומן / עו"ש</button>
-        <button class="pay-btn" id="rec-pay-credit-btn" onclick="setRecPayType('credit')">💳 אשראי</button>
-      </div>
       <div class="form-row">
         <div class="form-group">
           <label>שם ההוצאה</label>
@@ -389,7 +384,7 @@ body{font-family:'Heebo',sans-serif;background:var(--bg);color:var(--text);min-h
 <div class="modal" id="add-cat-modal">
   <div class="modal-box">
     <button class="modal-close" onclick="closeModal('add-cat-modal')">✕</button>
-    <h3>הוסף קטגוריה</h3>
+    <h3 id="cat-modal-title">הוסף קטגוריה</h3>
     <div class="form-group" style="margin-bottom:.6rem;">
       <label>שם קטגוריה</label>
       <input type="text" id="cat-name-input" placeholder="מזון, בילויים...">
@@ -404,7 +399,7 @@ body{font-family:'Heebo',sans-serif;background:var(--bg);color:var(--text);min-h
         <input type="text" id="cat-emoji-input" placeholder="🛒" maxlength="2">
       </div>
     </div>
-    <button class="save-btn" onclick="saveCategory()">שמור קטגוריה</button>
+    <button class="save-btn" id="cat-save-btn" onclick="saveCategory()">שמור קטגוריה</button>
   </div>
 </div>
 
@@ -524,18 +519,12 @@ async function applyRecurring(){
     const ts=new Date(y,m-1,day,8,0,0).getTime();
     updates[`budget/months/${state.currentMonth}/expenses/${expId}`]={
       amount:r.amount,catId:r.catId,desc:r.name+' (קבוע)',ts,recurring:true,
-      payType:r.payType||'cash'
+      payType:'credit' // הוצאות קבועות תמיד באשראי
     };
   });
-  // Deduct from cash balance for cash recurring immediately
-  const cashDeduction=state.recurring.filter(r=>(!r.payType||r.payType==='cash')).reduce((s,r)=>s+r.amount,0);
-  if(cashDeduction>0){
-    updates['budget/balance/cash']=(state.balance.cash||0)-cashDeduction;
-  }
   updates[`budget/months/${state.currentMonth}/recurringApplied`]=true;
   if(Object.keys(updates).length>1){
     await db.ref().update(updates);
-    if(cashDeduction>0)state.balance.cash=(state.balance.cash||0)-cashDeduction;
   }
 }
 
@@ -620,7 +609,14 @@ function renderCatSelect(){
 }
 
 function renderCatManage(){
-  document.getElementById('cat-manage-list').innerHTML=state.categories.map(cat=>`<div class="cat-manage-item"><div class="ce">${cat.emoji||'📦'}</div><div class="cn">${cat.name}</div><div class="cb">₪${cat.budget.toLocaleString('he-IL')}/חודש</div><button class="cd" onclick="deleteCategory('${cat.id}')">✕</button></div>`).join('');
+  document.getElementById('cat-manage-list').innerHTML=state.categories.map(cat=>`
+    <div class="cat-manage-item">
+      <div class="ce">${cat.emoji||'📦'}</div>
+      <div class="cn">${cat.name}</div>
+      <div class="cb">₪${cat.budget.toLocaleString('he-IL')}/חודש</div>
+      <button class="cd" style="color:#9ca3af;font-size:13px;margin-left:2px;" onclick="openEditCatModal('${cat.id}')">✏️</button>
+      <button class="cd" onclick="deleteCategory('${cat.id}')">✕</button>
+    </div>`).join('');
 }
 
 function renderRecurring(){
@@ -689,7 +685,7 @@ async function addRecurring(){
   const amount=parseFloat(document.getElementById('rec-amount').value);
   const catId=document.getElementById('rec-cat').value;
   const day=parseInt(document.getElementById('rec-day').value)||1;
-  const payType=state.recPayType;
+  const payType='credit'; // הוצאות קבועות תמיד באשראי
   if(!name){showToast('יש להכניס שם');return;}
   if(!amount||amount<=0){showToast('יש להכניס סכום');return;}
   const id='r'+Date.now();
@@ -698,7 +694,7 @@ async function addRecurring(){
   await db.ref(`budget/recurring/${id}`).set(rec);
   document.getElementById('rec-name').value='';document.getElementById('rec-amount').value='';
   renderRecurring();
-  showToast(`✅ "${name}" נוספה כהוצאה קבועה`);
+  showToast(`✅ "${name}" נוספה כהוצאה קבועה (💳 אשראי)`);
 }
 
 async function deleteRecurring(id){
@@ -740,20 +736,49 @@ async function saveBalance(){
 }
 
 // Categories
+let editingCatId=null;
+
 function openAddCatModal(){
+  editingCatId=null;
+  document.getElementById('cat-modal-title').textContent='הוסף קטגוריה';
+  document.getElementById('cat-save-btn').textContent='שמור קטגוריה';
   ['cat-name-input','cat-budget-input','cat-emoji-input'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('add-cat-modal').classList.add('open');
 }
+
+function openEditCatModal(id){
+  const cat=state.categories.find(c=>c.id===id);
+  if(!cat)return;
+  editingCatId=id;
+  document.getElementById('cat-modal-title').textContent='✏️ עריכת קטגוריה';
+  document.getElementById('cat-save-btn').textContent='עדכן קטגוריה';
+  document.getElementById('cat-name-input').value=cat.name;
+  document.getElementById('cat-budget-input').value=cat.budget||'';
+  document.getElementById('cat-emoji-input').value=cat.emoji||'';
+  document.getElementById('add-cat-modal').classList.add('open');
+}
+
 async function saveCategory(){
   const name=document.getElementById('cat-name-input').value.trim();
   const budget=parseFloat(document.getElementById('cat-budget-input').value)||0;
   const emoji=document.getElementById('cat-emoji-input').value.trim()||'📦';
   if(!name){showToast('יש להכניס שם קטגוריה');return;}
-  const id='cat_'+Date.now();
-  const cat={id,name,budget,emoji,color:COLORS[state.categories.length%COLORS.length]};
-  state.categories.push(cat);
-  await db.ref(`budget/categories/${id}`).set(cat);
-  closeModal('add-cat-modal');render();showToast('✅ קטגוריה נוספה');
+
+  if(editingCatId){
+    // Edit existing
+    const cat=state.categories.find(c=>c.id===editingCatId);
+    if(!cat)return;
+    cat.name=name;cat.budget=budget;cat.emoji=emoji;
+    await db.ref(`budget/categories/${editingCatId}`).update({name,budget,emoji});
+    closeModal('add-cat-modal');render();showToast('✅ קטגוריה עודכנה');
+  } else {
+    // Add new
+    const id='cat_'+Date.now();
+    const cat={id,name,budget,emoji,color:COLORS[state.categories.length%COLORS.length]};
+    state.categories.push(cat);
+    await db.ref(`budget/categories/${id}`).set(cat);
+    closeModal('add-cat-modal');render();showToast('✅ קטגוריה נוספה');
+  }
 }
 async function deleteCategory(id){
   if(!confirm('למחוק קטגוריה זו?'))return;
@@ -1105,35 +1130,64 @@ document.querySelectorAll('.modal').forEach(m=>{
   m.addEventListener('click',e=>{if(e.target===m)m.classList.remove('open');});
 });
 
-// ── NOTIFICATIONS ──────────────────────────────────────────────
-const ONESIGNAL_APP_ID='57283ae2-38e3-4260-a5b1-fb95e59dd69e';
+// ── NOTIFICATIONS — Web Push (עובד גם כשהאפליקציה סגורה) ──────
 const WORKER_URL='https://budget-push.eyalfalk08.workers.dev';
 
-let oneSignalReady=false;
-window.OneSignalDeferred=window.OneSignalDeferred||[];
-OneSignalDeferred.push(async function(OS){
-  await OS.init({appId:ONESIGNAL_APP_ID,allowLocalhostAsSecureOrigin:true,notifyButton:{enable:false}});
-  oneSignalReady=true;
-  updateNotifUI();
-});
+// VAPID public key — חייב להתאים למה שמוגדר ב-Cloudflare Worker שלך
+// אם אין לך עדיין: צור ב- https://vapidkeys.com ועדכן כאן + ב-Worker
+const VAPID_PUBLIC_KEY='BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBkr3qBkYjTNfxzPnfxTjCE0M';
 
-// Register Service Worker immediately so showNotification works even on first use
-if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('OneSignalSDKWorker.js',{scope:'./'})
-    .then(reg=>{
-      // Force activate waiting SW immediately
-      if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'});
-      reg.addEventListener('updatefound',()=>{
-        if(reg.installing)reg.installing.addEventListener('statechange',()=>{
-          if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'});
-        });
-      });
-    }).catch(()=>{});
+let swReg=null; // Service Worker registration
+
+// רישום SW משלנו (לא OneSignal)
+async function registerSW(){
+  if(!('serviceWorker' in navigator))return null;
+  try{
+    const reg=await navigator.serviceWorker.register('sw.js',{scope:'./'});
+    // אפשר גם OneSignal SW להמשיך לרוץ במקביל
+    swReg=reg;
+    return reg;
+  }catch(e){
+    console.warn('SW register failed:',e);
+    return null;
+  }
 }
 
 function getNotifPermission(){
   if(!('Notification' in window))return'unsupported';
-  return Notification.permission; // 'default'|'granted'|'denied'
+  return Notification.permission;
+}
+
+// המרת VAPID key מ-base64 ל-Uint8Array
+function urlBase64ToUint8Array(base64String){
+  const padding='='.repeat((4-base64String.length%4)%4);
+  const base64=(base64String+padding).replace(/-/g,'+').replace(/_/g,'/');
+  const raw=atob(base64);
+  return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));
+}
+
+async function subscribeToPush(reg){
+  try{
+    // בדוק אם כבר יש subscription
+    let sub=await reg.pushManager.getSubscription();
+    if(!sub){
+      sub=await reg.pushManager.subscribe({
+        userVisibleOnly:true,
+        applicationServerKey:urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+      });
+    }
+    // שמור subscription ב-Firebase כדי ש-Worker ידע לאן לשלוח
+    const subJson=sub.toJSON();
+    await db.ref('budget/pushSubscriptions/'+btoa(subJson.endpoint).slice(0,40).replace(/[^a-zA-Z0-9]/g,'_')).set({
+      endpoint:subJson.endpoint,
+      keys:subJson.keys,
+      ts:Date.now()
+    });
+    return sub;
+  }catch(e){
+    console.warn('Push subscribe failed:',e);
+    return null;
+  }
 }
 
 function updateNotifUI(){
@@ -1149,7 +1203,7 @@ function updateNotifUI(){
   } else if(perm==='granted'){
     btn.textContent='✅ התראות פעילות';
     btn.className='notif-perm-btn notif-active';
-    status.textContent='תקבל התראה על כל הוצאה עם פירוט הקטגוריה';
+    status.innerHTML='📲 תקבל התראה על כל הוצאה — <strong>גם כשהאפליקציה סגורה</strong>';
     testBox.style.display='block';
   } else if(perm==='denied'){
     btn.textContent='🚫 התראות חסומות';
@@ -1159,7 +1213,7 @@ function updateNotifUI(){
   } else {
     btn.textContent='🔔 הפעל התראות';
     btn.className='notif-perm-btn';
-    status.textContent='לחץ כדי לאשר קבלת התראות';
+    status.textContent='לחץ כדי לאשר קבלת התראות לטלפון/מחשב';
     testBox.style.display='none';
   }
 }
@@ -1168,57 +1222,61 @@ async function handleNotifBtn(){
   const perm=getNotifPermission();
   if(perm==='granted'){showToast('התראות כבר פעילות ✅');return;}
   if(perm==='denied'){showToast('התראות חסומות — שחרר בהגדרות הדפדפן');return;}
+
+  // בקש הרשאה
   const result=await Notification.requestPermission();
   updateNotifUI();
-  if(result==='granted'){
-    showToast('✅ התראות הופעלו!');
+  if(result!=='granted'){showToast('❌ לא אושר — אפשר בהגדרות הדפדפן');return;}
+
+  // רשום SW ו-subscribe ל-Push
+  const reg=swReg||await registerSW();
+  if(reg){
+    await subscribeToPush(reg);
+    showToast('✅ התראות הופעלו! תגיע התראה גם כשהאפליקציה סגורה');
     _fireNotif('💰 תקציב משפחתי','התראות הופעלו! תקבל עדכון על כל הוצאה.');
   } else {
-    showToast('❌ לא אושר — אפשר בהגדרות הדפדפן');
+    showToast('✅ התראות הופעלו (דפדפן בלבד)');
+    _fireNotif('💰 תקציב משפחתי','התראות הופעלו!');
   }
 }
 
 async function sendTestNotif(){
-  _fireNotif('🧪 בדיקת התראה','ההתראות עובדות בהצלחה! ₪200 על מזון — נותר ₪800');
+  await _fireNotif('🧪 בדיקת התראה','ההתראות עובדות! ₪200 על מזון — נותר ₪800');
   showToast('📤 התראת בדיקה נשלחה');
 }
 
-function _fireNotif(title,body){
-  const perm=getNotifPermission();
-
-  // Layer 1: Service Worker showNotification (best — works when tab is in background/closed)
-  if(perm==='granted'&&'serviceWorker' in navigator){
-    navigator.serviceWorker.ready.then(reg=>{
-      reg.showNotification(title,{
-        body,
-        dir:'rtl',
-        lang:'he',
+async function _fireNotif(title,body){
+  // שכבה 1: Service Worker showNotification — עובד גם ברקע
+  const reg=swReg||('serviceWorker' in navigator?await navigator.serviceWorker.ready.catch(()=>null):null);
+  if(reg&&getNotifPermission()==='granted'){
+    try{
+      await reg.showNotification(title,{
+        body,dir:'rtl',lang:'he',tag:'budget-expense',renotify:true,
+        vibrate:[200,100,200],
         icon:'https://cdn.jsdelivr.net/npm/emoji-datasource-apple/img/apple/64/1f4b0.png',
         badge:'https://cdn.jsdelivr.net/npm/emoji-datasource-apple/img/apple/64/1f514.png',
-        tag:'budget-expense',        // replaces previous notif instead of stacking
-        renotify:true,
-        vibrate:[200,100,200],
+        data:{url:location.href}
       });
-    }).catch(()=>{
-      // Layer 2: fallback to basic Notification if SW fails
-      if(perm==='granted'){
-        try{new Notification(title,{body,dir:'rtl',lang:'he'});}catch(e){}
-      }
-    });
-  } else if(perm==='granted'){
-    // Layer 2 directly: no SW support
-    try{new Notification(title,{body,dir:'rtl',lang:'he'});}catch(e){}
+    }catch(e){
+      // fallback
+      if(getNotifPermission()==='granted')try{new Notification(title,{body,dir:'rtl',lang:'he'});}catch(_){}
+    }
+  } else if(getNotifPermission()==='granted'){
+    try{new Notification(title,{body,dir:'rtl',lang:'he'});}catch(_){}
   }
 
-  // Layer 3: Cloudflare Worker push (reaches phone even when app fully closed)
-  fetch(WORKER_URL,{
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({title,body})
-  }).catch(()=>{});
+  // שכבה 2: Cloudflare Worker — שולח Push לכל ה-subscriptions השמורות ב-Firebase
+  // (כולל כשהאפליקציה סגורה לגמרי)
+  try{
+    await fetch(WORKER_URL,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({title,body})
+    });
+  }catch(_){}
 }
 
-function buildNotifMessage(amount, cat, catSpentAfter, payType){
+function buildNotifMessage(amount,cat,catSpentAfter,payType){
   const payLabel=payType==='credit'?'💳 אשראי':'💵 מזומן';
   const remaining=cat.budget-catSpentAfter;
   const pct=cat.budget>0?Math.round(catSpentAfter/cat.budget*100):0;
@@ -1229,7 +1287,7 @@ function buildNotifMessage(amount, cat, catSpentAfter, payType){
       title=`⚠️ חריגה! ${cat.emoji} ${cat.name}`;
       body=`הוצאת ₪${catSpentAfter.toLocaleString('he-IL')} מתוך תקציב ₪${cat.budget.toLocaleString('he-IL')} (חריגה של ₪${Math.abs(remaining).toLocaleString('he-IL')})`;
     } else {
-      body=`נשאר בקטגוריה: ₪${remaining.toLocaleString('he-IL')} מתוך ₪${cat.budget.toLocaleString('he-IL')} (${pct}% נוצל)`;
+      body=`נשאר: ₪${remaining.toLocaleString('he-IL')} מתוך ₪${cat.budget.toLocaleString('he-IL')} (${pct}% נוצל)`;
       if(pct>=80)body='⚠️ '+body;
     }
   } else {
@@ -1237,6 +1295,12 @@ function buildNotifMessage(amount, cat, catSpentAfter, payType){
   }
   return{title,body};
 }
+
+// אתחול — רשום SW מיד בטעינה
+registerSW().then(reg=>{
+  if(reg)swReg=reg;
+  updateNotifUI();
+});
 // ─────────────────────────────────────────────────────────────
 
 loadData();
