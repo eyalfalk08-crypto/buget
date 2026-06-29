@@ -6,6 +6,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>תקציב משפחתי</title>
+<script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
 <style>
@@ -123,7 +124,9 @@ body{font-family:'Heebo',sans-serif;background:var(--bg);color:var(--text);min-h
 .rec-item .ramount{font-size:15px;font-weight:800;color:var(--danger);}
 .rec-item .rdel{background:none;border:none;color:#ccc;cursor:pointer;font-size:15px;}
 .rec-item .rdel:hover{color:var(--danger);}
-.reset-btn{width:100%;padding:10px;background:#f3f4f6;color:var(--text-muted);border:1.5px dashed var(--border);border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:'Heebo',sans-serif;margin-top:.4rem;}
+.notif-perm-btn{width:100%;padding:12px;background:linear-gradient(135deg,#6d28d9,#7c3aed);color:white;border:none;border-radius:12px;font-size:14px;font-weight:700;cursor:pointer;font-family:'Heebo',sans-serif;}
+.notif-active{background:linear-gradient(135deg,var(--primary),var(--primary-light))!important;}
+.notif-blocked{background:#e5e7eb!important;color:var(--text-muted)!important;cursor:default!important;}color:var(--text-muted);border:1.5px dashed var(--border);border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:'Heebo',sans-serif;margin-top:.4rem;}
 .summary-row{display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem;margin-bottom:.8rem;}
 .summary-box{background:white;border-radius:12px;padding:.8rem;text-align:center;box-shadow:var(--shadow);}
 .summary-box .sv{font-size:18px;font-weight:900;}
@@ -295,6 +298,24 @@ body{font-family:'Heebo',sans-serif;background:var(--bg);color:var(--text);min-h
 
   <!-- SETTINGS -->
   <div id="tab-settings" style="display:none;">
+    <div class="section-title">🔔 התראות לטלפון / מחשב</div>
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:.8rem;margin-bottom:.8rem;">
+        <div style="font-size:32px;">📲</div>
+        <div>
+          <div style="font-size:13px;font-weight:700;margin-bottom:2px;">התראה על כל הוצאה</div>
+          <div style="font-size:11px;color:var(--text-muted);">קבל פוש לטלפון/מחשב עם הסכום וכמה נשאר בקטגוריה — גם כשהאפליקציה סגורה</div>
+        </div>
+      </div>
+      <div id="notif-status-box">
+        <button class="notif-perm-btn" id="notif-main-btn" onclick="handleNotifBtn()">🔔 הפעל התראות</button>
+        <div id="notif-status" style="font-size:12px;color:var(--text-muted);margin-top:.6rem;text-align:center;"></div>
+      </div>
+      <div id="notif-test-box" style="display:none;margin-top:.7rem;">
+        <button class="reset-btn" onclick="sendTestNotif()" style="border-color:var(--primary-light);color:var(--primary);">🧪 שלח התראת בדיקה</button>
+      </div>
+    </div>
+
     <div class="section-title">יתרת חשבון</div>
     <div class="balance-set-card">
       <div class="balance-set-item cash-card">
@@ -616,13 +637,16 @@ async function _addExpense(amount,catId,desc,payType){
   }
   await db.ref().update(updates);
   state.expenses.push({...expense,id:ref.key});
-  const catSpent=state.expenses.filter(e=>e.catId===catId).reduce((s,e)=>s+e.amount,0);
-  const remaining=cat?cat.budget-catSpent:0;
-  const pct=cat&&cat.budget>0?catSpent/cat.budget*100:0;
+  const catSpentAfter=state.expenses.filter(e=>e.catId===catId).reduce((s,e)=>s+e.amount,0);
+  const {title:nTitle,body:nBody}=buildNotifMessage(amount,cat||{name:'הוצאה',emoji:'📦',budget:0,id:catId},catSpentAfter,payType||'cash');
   let toastMsg=`✅ ${payType==='credit'?'💳':'💵'} ₪${amount.toLocaleString('he-IL')} — ${cat?cat.name:''}`;
-  if(cat&&cat.budget>0&&catSpent>cat.budget)toastMsg=`⚠️ חרגת! ${cat.emoji} ${cat.name}`;
-  else if(cat&&pct>=80)toastMsg=`⚠️ ${cat.emoji} ${cat.name}: ${Math.round(pct)}% נוצל`;
+  if(cat&&cat.budget>0){
+    const sp=catSpentAfter;
+    if(sp>cat.budget)toastMsg=`⚠️ חרגת! ${cat.emoji} ${cat.name}`;
+    else if(sp/cat.budget>=0.8)toastMsg=`⚠️ ${cat.emoji} ${cat.name}: ${Math.round(sp/cat.budget*100)}% נוצל`;
+  }
   showToast(toastMsg);
+  _fireNotif(nTitle,nBody);
   render();
 }
 
@@ -863,14 +887,6 @@ async function confirmAiExpense(){
   switchTab('overview');
 }
 
-async function confirmAiExpense(){
-  if(!pendingAiExpense)return;
-  closeModal('ai-confirm-modal');
-  await _addExpense(pendingAiExpense.amount,pendingAiExpense.catId,pendingAiExpense.desc,pendingAiExpense.payType);
-  pendingAiExpense=null;
-  switchTab('overview');
-}
-
 async function renderHistory(){
   const snap=await db.ref('budget/months').once('value');
   const months=snap.val()||{};
@@ -913,11 +929,117 @@ function switchTab(tab){
     btn.classList.toggle('active',['overview','expenses','recurring','history','settings'][i]===tab);
   });
   if(tab==='history')renderHistory();
+  if(tab==='settings')updateNotifUI();
 }
 
 document.querySelectorAll('.modal').forEach(m=>{
   m.addEventListener('click',e=>{if(e.target===m)m.classList.remove('open');});
 });
+
+// ── NOTIFICATIONS ──────────────────────────────────────────────
+const ONESIGNAL_APP_ID='57283ae2-38e3-4260-a5b1-fb95e59dd69e';
+const WORKER_URL='https://budget-push.eyalfalk08.workers.dev';
+
+let oneSignalReady=false;
+window.OneSignalDeferred=window.OneSignalDeferred||[];
+OneSignalDeferred.push(async function(OS){
+  await OS.init({appId:ONESIGNAL_APP_ID,allowLocalhostAsSecureOrigin:true,notifyButton:{enable:false}});
+  oneSignalReady=true;
+  updateNotifUI();
+});
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('OneSignalSDKWorker.js',{scope:'./'}).catch(()=>{});
+}
+
+function getNotifPermission(){
+  if(!('Notification' in window))return'unsupported';
+  return Notification.permission; // 'default'|'granted'|'denied'
+}
+
+function updateNotifUI(){
+  const perm=getNotifPermission();
+  const btn=document.getElementById('notif-main-btn');
+  const status=document.getElementById('notif-status');
+  const testBox=document.getElementById('notif-test-box');
+  if(!btn)return;
+  if(perm==='unsupported'){
+    btn.textContent='❌ הדפדפן לא תומך בהתראות';
+    btn.className='notif-perm-btn notif-blocked';
+    status.textContent='';testBox.style.display='none';
+  } else if(perm==='granted'){
+    btn.textContent='✅ התראות פעילות';
+    btn.className='notif-perm-btn notif-active';
+    status.textContent='תקבל התראה על כל הוצאה עם פירוט הקטגוריה';
+    testBox.style.display='block';
+  } else if(perm==='denied'){
+    btn.textContent='🚫 התראות חסומות';
+    btn.className='notif-perm-btn notif-blocked';
+    status.innerHTML='לשחרור: הגדרות דפדפן ← אתרים ← הרשאות ← התראות<br>מחק את החסימה עבור אתר זה ורענן';
+    testBox.style.display='none';
+  } else {
+    btn.textContent='🔔 הפעל התראות';
+    btn.className='notif-perm-btn';
+    status.textContent='לחץ כדי לאשר קבלת התראות';
+    testBox.style.display='none';
+  }
+}
+
+async function handleNotifBtn(){
+  const perm=getNotifPermission();
+  if(perm==='granted'){showToast('התראות כבר פעילות ✅');return;}
+  if(perm==='denied'){showToast('התראות חסומות — שחרר בהגדרות הדפדפן');return;}
+  const result=await Notification.requestPermission();
+  updateNotifUI();
+  if(result==='granted'){
+    showToast('✅ התראות הופעלו!');
+    _fireNotif('💰 תקציב משפחתי','התראות הופעלו! תקבל עדכון על כל הוצאה.');
+  } else {
+    showToast('❌ לא אושר — אפשר בהגדרות הדפדפן');
+  }
+}
+
+async function sendTestNotif(){
+  _fireNotif('🧪 בדיקת התראה','ההתראות עובדות בהצלחה! ₪200 על מזון — נותר ₪800');
+  showToast('📤 התראת בדיקה נשלחה');
+}
+
+function _fireNotif(title,body){
+  // Browser notification (works when tab is open/background)
+  if(getNotifPermission()==='granted'){
+    try{
+      if('serviceWorker' in navigator&&navigator.serviceWorker.controller){
+        navigator.serviceWorker.ready.then(reg=>{
+          reg.showNotification(title,{body,icon:'https://cdn.jsdelivr.net/npm/emoji-datasource-apple/img/apple/64/1f4b0.png',dir:'rtl',lang:'he',badge:'https://cdn.jsdelivr.net/npm/emoji-datasource-apple/img/apple/64/1f514.png'});
+        });
+      } else {
+        new Notification(title,{body,dir:'rtl',lang:'he'});
+      }
+    }catch(e){console.warn('notif err',e);}
+  }
+  // Also push via Cloudflare Worker (reaches phone when app closed)
+  fetch(WORKER_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title,body})}).catch(()=>{});
+}
+
+function buildNotifMessage(amount, cat, catSpentAfter, payType){
+  const payLabel=payType==='credit'?'💳 אשראי':'💵 מזומן';
+  const remaining=cat.budget-catSpentAfter;
+  const pct=cat.budget>0?Math.round(catSpentAfter/cat.budget*100):0;
+  let title=`${cat.emoji} ${cat.name} — ₪${amount.toLocaleString('he-IL')} (${payLabel})`;
+  let body='';
+  if(cat.budget>0){
+    if(catSpentAfter>cat.budget){
+      title=`⚠️ חריגה! ${cat.emoji} ${cat.name}`;
+      body=`הוצאת ₪${catSpentAfter.toLocaleString('he-IL')} מתוך תקציב ₪${cat.budget.toLocaleString('he-IL')} (חריגה של ₪${Math.abs(remaining).toLocaleString('he-IL')})`;
+    } else {
+      body=`נשאר בקטגוריה: ₪${remaining.toLocaleString('he-IL')} מתוך ₪${cat.budget.toLocaleString('he-IL')} (${pct}% נוצל)`;
+      if(pct>=80)body='⚠️ '+body;
+    }
+  } else {
+    body=`סה"כ הוצאה: ₪${amount.toLocaleString('he-IL')}`;
+  }
+  return{title,body};
+}
+// ─────────────────────────────────────────────────────────────
 
 loadData();
 </script>
