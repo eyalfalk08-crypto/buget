@@ -1291,11 +1291,14 @@ async function applyInstallmentPayment(inst,monthKey,paymentNum){
     amount:inst.monthly,catId:inst.catId,desc,ts,
     payType:'credit',installmentId:inst.id,paymentNum,isLast
   });
-  // Update paidCount
-  await db.ref(`budget/installments/${inst.id}/paidCount`).set(paymentNum);
-  if(isLast){
-    await db.ref(`budget/installments/${inst.id}/active`).set(false);
-    _fireNotif(`✅ תשלומים הסתיימו!`,`"${inst.name}" — כל ${inst.count} התשלומים שולמו. סה"כ ₪${inst.total.toLocaleString('he-IL')}`);
+ // Update paidCount only for real months (not future browsing)
+  const realMonth=getBudgetMonthKey(new Date());
+  if(monthKey<=realMonth){
+    await db.ref(`budget/installments/${inst.id}/paidCount`).set(paymentNum);
+    if(isLast){
+      await db.ref(`budget/installments/${inst.id}/active`).set(false);
+      _fireNotif(`✅ תשלומים הסתיימו!`,`"${inst.name}" — כל ${inst.count} התשלומים שולמו. סה"כ ₪${inst.total.toLocaleString('he-IL')}`);
+    }
   }
 }
 
