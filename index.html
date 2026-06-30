@@ -1256,12 +1256,21 @@ async function addInstallment(){
     createdTs:Date.now()
   };
 
+ // Calculate how many payments have already passed since startMonth
+  const [sy,sm]=startMonth.split('-').map(Number);
+  const [cy,cm]=state.currentMonth.split('-').map(Number);
+  const monthsPassed=(cy-sy)*12+(cm-sm);
+  const currentPaymentNum=Math.min(monthsPassed+1,count);
+  inst.paidCount=Math.max(0,monthsPassed);
   state.installments=state.installments||[];
   state.installments.push(inst);
   await db.ref(`budget/installments/${id}`).set(inst);
-
-  // Apply first payment immediately to current month
-  await applyInstallmentPayment(inst,state.currentMonth,1);
+  // Apply current month payment
+  if(currentPaymentNum<=count){
+    await applyInstallmentPayment(inst,state.currentMonth,currentPaymentNum);
+    inst.paidCount=currentPaymentNum;
+    await db.ref(`budget/installments/${id}/paidCount`).set(currentPaymentNum);
+  }
 
   document.getElementById('inst-name').value='';
   document.getElementById('inst-total').value='';
