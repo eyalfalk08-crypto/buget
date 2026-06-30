@@ -1204,7 +1204,9 @@ function renderInstallmentCatSelect(){
   if(startSel){
     startSel.innerHTML='';
     const now=new Date();
-    for(let i=-2;i<=24;i++){
+   const startYear=2024;
+    const totalMonths=(now.getFullYear()-startYear)*12+now.getMonth()+25;
+    for(let i=-(now.getFullYear()-startYear)*12-now.getMonth();i<=24;i++){
       const d=new Date(now.getFullYear(),now.getMonth()+i,1);
       const y=d.getFullYear();
       const m=String(d.getMonth()+1).padStart(2,'0');
