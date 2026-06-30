@@ -1301,6 +1301,9 @@ async function applyInstallmentPayment(inst,monthKey,paymentNum){
 
 async function applyInstallmentsForMonth(){
   if(!state.installments||!state.installments.length)return;
+  // Only apply for real months (not future browsing)
+  const realMonth=getBudgetMonthKey(new Date());
+  if(state.currentMonth>realMonth)return;
   const activeInst=state.installments.filter(i=>i.active&&i.paidCount<i.count);
   for(const inst of activeInst){
     if(state.currentMonth<inst.startMonth)continue;
