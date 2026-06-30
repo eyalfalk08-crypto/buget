@@ -1260,6 +1260,7 @@ async function addInstallment(){
   const [sy,sm]=startMonth.split('-').map(Number);
   const [cy,cm]=state.currentMonth.split('-').map(Number);
   const monthsPassed=(cy-sy)*12+(cm-sm);
+  console.log('startMonth:',startMonth,'currentMonth:',state.currentMonth,'monthsPassed:',monthsPassed);
   const currentPaymentNum=Math.min(monthsPassed+1,count);
   inst.paidCount=Math.max(0,monthsPassed);
   state.installments=state.installments||[];
