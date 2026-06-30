@@ -1199,6 +1199,23 @@ function renderInstallmentCatSelect(){
   const opts=state.categories.map(c=>`<option value="${c.id}">${c.emoji||''} ${c.name}</option>`).join('');
   const sel=document.getElementById('inst-cat');
   if(sel)sel.innerHTML=opts;
+  // Populate start month selector
+  const startSel=document.getElementById('inst-start-month');
+  if(startSel){
+    startSel.innerHTML='';
+    const now=new Date();
+    for(let i=-2;i<=24;i++){
+      const d=new Date(now.getFullYear(),now.getMonth()+i,1);
+      const y=d.getFullYear();
+      const m=String(d.getMonth()+1).padStart(2,'0');
+      const key=`${y}-${m}`;
+      const opt=document.createElement('option');
+      opt.value=key;
+      opt.textContent=`${MONTHS_HE[d.getMonth()]} ${y}`;
+      if(key===state.currentMonth)opt.selected=true;
+      startSel.appendChild(opt);
+    }
+  }
 }
 
 function calcInstallment(){
@@ -1226,14 +1243,12 @@ async function addInstallment(){
   if(!count||count<2){showToast('מספר תשלומים חייב להיות לפחות 2');return;}
 
   const monthly=Math.ceil(total/count);
-  // Start from current month
-  const [y,m]=state.currentMonth.split('-').map(Number);
-  const startDate=new Date(y,m-1,1);
-
+  const startMonthSel=document.getElementById('inst-start-month');
+  const startMonth=startMonthSel?startMonthSel.value:state.currentMonth;
   const id='inst_'+Date.now();
   const inst={
     id,name,total,count,monthly,catId,day,
-    startMonth:state.currentMonth,
+    startMonth:startMonth,
     paidCount:0,
     active:true,
     createdTs:Date.now()
