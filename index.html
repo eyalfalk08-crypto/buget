@@ -1293,17 +1293,23 @@ async function applyInstallmentsForMonth(){
   if(!state.installments||!state.installments.length)return;
   const activeInst=state.installments.filter(i=>i.active&&i.paidCount<i.count);
   for(const inst of activeInst){
+    if(state.currentMonth<inst.startMonth)continue;
+    // Calculate which payment number this month is
+    const [sy,sm]=inst.startMonth.split('-').map(Number);
+    const [cy,cm]=state.currentMonth.split('-').map(Number);
+    const monthsDiff=(cy-sy)*12+(cm-sm);
+    const paymentNum=monthsDiff+1;
+    if(paymentNum>inst.count)continue;
     const expId=`inst_${inst.id}_${state.currentMonth}`;
     const snap=await db.ref(`budget/months/${state.currentMonth}/expenses/${expId}`).once('value');
-    if(snap.exists())continue; // already applied
-    // Check if this month is >= start month
-    if(state.currentMonth<inst.startMonth)continue;
-    const paymentNum=inst.paidCount+1;
-    if(paymentNum>inst.count)continue;
+    if(snap.exists())continue;
     await applyInstallmentPayment(inst,state.currentMonth,paymentNum);
-    // Update local state
-    inst.paidCount=paymentNum;
-    if(paymentNum>=inst.count)inst.active=false;
+    // Update paidCount to reflect actual progress
+    const newPaidCount=Math.max(inst.paidCount,paymentNum);
+    inst.paidCount=newPaidCount;
+    if(newPaidCount>=inst.count)inst.active=false;
+    await db.ref(`budget/installments/${inst.id}/paidCount`).set(newPaidCount);
+    if(!inst.active)await db.ref(`budget/installments/${inst.id}/active`).set(false);
   }
 }
 
