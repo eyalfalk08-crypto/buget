@@ -1301,12 +1301,10 @@ async function applyInstallmentPayment(inst,monthKey,paymentNum){
     }
   }
 }
-
 async function applyInstallmentsForMonth(){
   if(!state.installments||!state.installments.length)return;
-  // Only apply for real months (not future browsing)
   const realMonth=getBudgetMonthKey(new Date());
-  if(state.currentMonth>realMonth)return;
+  const isFuture=state.currentMonth>realMonth;
   const activeInst=state.installments.filter(i=>i.active&&i.paidCount<i.count);
   for(const inst of activeInst){
     if(state.currentMonth<inst.startMonth)continue;
@@ -1316,10 +1314,22 @@ async function applyInstallmentsForMonth(){
     const monthsDiff=(cy-sy)*12+(cm-sm);
     const paymentNum=monthsDiff+1;
     if(paymentNum>inst.count)continue;
-    const expId=`inst_${inst.id}_${state.currentMonth}`;
-    const snap=await db.ref(`budget/months/${state.currentMonth}/expenses/${expId}`).once('value');
-    if(snap.exists())continue;
-    await applyInstallmentPayment(inst,state.currentMonth,paymentNum);
+const expId=`inst_${inst.id}_${state.currentMonth}`;
+    if(!isFuture){
+      const snap=await db.ref(`budget/months/${state.currentMonth}/expenses/${expId}`).once('value');
+      if(snap.exists())continue;
+      await applyInstallmentPayment(inst,state.currentMonth,paymentNum);
+    } else {
+      // Future month - add to local state only (no Firebase)
+      const [fy,fm]=state.currentMonth.split('-').map(Number);
+      const ts=new Date(fy,fm-1,Math.min(inst.day,28),9,0,0).getTime();
+      const isLast=paymentNum===inst.count;
+      state.expenses.push({
+        id:expId,amount:inst.monthly,catId:inst.catId,
+        desc:`${inst.name} — תשלום ${paymentNum}/${inst.count}${isLast?' (אחרון!)':''}`,
+        ts,payType:'credit',installmentId:inst.id,paymentNum,isLast,isForecast:true
+      });
+    }
     // Update paidCount to reflect actual progress
     const newPaidCount=Math.max(inst.paidCount,paymentNum);
     inst.paidCount=newPaidCount;
