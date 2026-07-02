@@ -588,12 +588,25 @@ async function loadMonthData(){
 
 async function applyRecurring(){
   if(!state.recurring.length)return;
+  const realMonth=getBudgetMonthKey(new Date());
+  const isFuture=state.currentMonth>realMonth;
+  const [y,m]=state.currentMonth.split('-').map(Number);
+  if(isFuture){
+    // Future month - add to local state only
+    state.recurring.forEach(r=>{
+      const expId='rec_'+r.id+'_'+state.currentMonth;
+      const day=Math.min(r.day||1,28);
+      const ts=new Date(y,m-1,day,8,0,0).getTime();
+      state.expenses.push({
+        id:expId,amount:r.amount,catId:r.catId,
+        desc:r.name+' (קבוע)',ts,recurring:true,
+        payType:'credit',isForecast:true
+      });
+    });
+    return;
+  }
   const snap=await db.ref(`budget/months/${state.currentMonth}/recurringApplied`).once('value');
   if(snap.val())return;
-  const [y,m]=state.currentMonth.split('-').map(Number);
-  const today=new Date();
-  const monthDate=new Date(y,m-1,1);
-  if(monthDate>today)return;
   const updates={};
   state.recurring.forEach(r=>{
     const expId='rec_'+r.id+'_'+state.currentMonth;
@@ -601,7 +614,7 @@ async function applyRecurring(){
     const ts=new Date(y,m-1,day,8,0,0).getTime();
     updates[`budget/months/${state.currentMonth}/expenses/${expId}`]={
       amount:r.amount,catId:r.catId,desc:r.name+' (קבוע)',ts,recurring:true,
-      payType:'credit' // הוצאות קבועות תמיד באשראי
+      payType:'credit'
     };
   });
   updates[`budget/months/${state.currentMonth}/recurringApplied`]=true;
