@@ -543,9 +543,37 @@ function changeMonth(dir){
   const sel=document.getElementById('month-sel');
   let idx=sel.selectedIndex+dir;
   if(idx<0)idx=0;if(idx>=sel.options.length)idx=sel.options.length-1;
+
+  // חסום מעבר לחודש עתידי לפני ה-10
+  if(dir>0){
+    const today=new Date();
+    const currentKey=getBudgetMonthKey(new Date());
+    const targetKey=sel.options[idx].value;
+    // אם היום לפני ה-10 — החודש "הנוכחי" הוא החודש הקודם, אסור לעבור מעבר לחודש הקלנדרי הנוכחי
+    const calendarMonth=`${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}`;
+    if(targetKey>calendarMonth){
+      const day=today.getDate();
+      if(day<10){
+        showToast(`⏳ ניתן לעבור לחודש הבא רק מה-10 בחודש (עוד ${10-day} ימים)`);
+        return;
+      }
+    }
+  }
+
   sel.selectedIndex=idx;state.currentMonth=sel.options[idx].value;loadMonthData();
 }
-function onMonthChange(){state.currentMonth=document.getElementById('month-sel').value;loadMonthData();}
+function onMonthChange(){
+  const sel=document.getElementById('month-sel');
+  const targetKey=sel.value;
+  const today=new Date();
+  const calendarMonth=`${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}`;
+  if(targetKey>calendarMonth&&today.getDate()<10){
+    showToast(`⏳ ניתן לעבור לחודש הבא רק מה-10 בחודש (עוד ${10-today.getDate()} ימים)`);
+    sel.value=state.currentMonth; // חזור לחודש הנוכחי
+    return;
+  }
+  state.currentMonth=targetKey;loadMonthData();
+}
 
 async function loadData(){
   const snap=await db.ref('budget').once('value');
