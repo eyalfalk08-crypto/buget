@@ -510,14 +510,7 @@ let editingBalanceType=null;
 
 function getBudgetMonthKey(date){
   const d=date||new Date();
-  let y=d.getFullYear(),m=d.getMonth()+1;
-  // חודש תקציבי: מה-10 לחודש עד ה-9 לחודש הבא
-  // אם לפני ה-10 — שייך לחודש הקודם
-  if(d.getDate()<10){
-    m--;
-    if(m<1){m=12;y--;}
-  }
-  return `${y}-${String(m).padStart(2,'0')}`;
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
 }
 
 function buildMonthOptions(){
@@ -592,46 +585,27 @@ async function applyRecurringAllMonths(){
   const snap=await db.ref('budget/months').once('value');
   const months=snap.val()||{};
   const currentKey=getBudgetMonthKey(new Date());
-
-  // הוסף גם את החודש הנוכחי אם לא קיים ב-Firebase
   if(!months[currentKey])months[currentKey]={};
-
+  const updates={};
   for(const monthKey of Object.keys(months)){
     const [y,m]=monthKey.split('-').map(Number);
-    // דלג על חודשים עתידיים — אלא אם זה החודש הנוכחי
-    if(monthKey!==currentKey){
-      const monthStart=new Date(y,m-1,1);
-      const today=new Date();
-      if(monthStart>today)continue;
-    }
     const existing=months[monthKey]?.expenses||{};
-    const missing=state.recurring.filter(r=>!existing['rec_'+r.id+'_'+monthKey]);
-    if(!missing.length)continue;
-    const updates={};
-    missing.forEach(r=>{
+    state.recurring.forEach(r=>{
       const expId='rec_'+r.id+'_'+monthKey;
-      const day=Math.min(r.day||1,28);
-      const ts=new Date(y,m-1,day,8,0,0).getTime();
-      updates[`budget/months/${monthKey}/expenses/${expId}`]={
-        amount:r.amount,catId:r.catId,
-        desc:r.name+' (קבוע)',ts,recurring:true,payType:'credit'
-      };
+      if(!existing[expId]){
+        const ts=new Date(y,m-1,Math.min(r.day||1,28),8,0,0).getTime();
+        updates[`budget/months/${monthKey}/expenses/${expId}`]={
+          amount:r.amount,catId:r.catId,desc:r.name+' (קבוע)',ts,recurring:true,payType:'credit'
+        };
+      }
     });
-    updates[`budget/months/${monthKey}/recurringApplied`]=true;
-    await db.ref().update(updates);
   }
+  if(Object.keys(updates).length)await db.ref().update(updates);
 }
 
 async function applyRecurring(){
   if(!state.recurring||!state.recurring.length)return;
   const [y,m]=state.currentMonth.split('-').map(Number);
-  const currentKey=getBudgetMonthKey(new Date());
-  // דלג על חודשים עתידיים — אלא אם זה החודש התקציבי הנוכחי
-  if(state.currentMonth!==currentKey){
-    const today=new Date();
-    if(new Date(y,m-1,1)>today)return;
-  }
-  // בדוק מה חסר
   const existingSnap=await db.ref(`budget/months/${state.currentMonth}/expenses`).once('value');
   const existing=existingSnap.val()||{};
   const missing=state.recurring.filter(r=>!existing['rec_'+r.id+'_'+state.currentMonth]);
@@ -639,14 +613,11 @@ async function applyRecurring(){
   const updates={};
   missing.forEach(r=>{
     const expId='rec_'+r.id+'_'+state.currentMonth;
-    const day=Math.min(r.day||1,28);
-    const ts=new Date(y,m-1,day,8,0,0).getTime();
+    const ts=new Date(y,m-1,Math.min(r.day||1,28),8,0,0).getTime();
     updates[`budget/months/${state.currentMonth}/expenses/${expId}`]={
-      amount:r.amount,catId:r.catId,
-      desc:r.name+' (קבוע)',ts,recurring:true,payType:'credit'
+      amount:r.amount,catId:r.catId,desc:r.name+' (קבוע)',ts,recurring:true,payType:'credit'
     };
   });
-  updates[`budget/months/${state.currentMonth}/recurringApplied`]=true;
   await db.ref().update(updates);
 }
 
