@@ -520,6 +520,14 @@ let editingBalanceType=null;
 
 function getBudgetMonthKey(date){
   const d=date||new Date();
+  let y=d.getFullYear(),m=d.getMonth()+1;
+  if(d.getDate()<10){m--;if(m<1){m=12;y--;}}
+  return `${y}-${String(m).padStart(2,'0')}`;
+}
+
+// החודש הקלנדרי הנוכחי (לצורך חסימת ניווט)
+function getCalendarMonthKey(){
+  const d=new Date();
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
 }
 
@@ -546,19 +554,11 @@ function changeMonth(dir){
 
   if(dir>0){
     const today=new Date();
+    const budgetKey=getBudgetMonthKey(today); // החודש התקציבי הנוכחי
     const targetKey=sel.options[idx].value;
-    const [ty,tm]=targetKey.split('-').map(Number);
-    const cy=today.getFullYear(),cm=today.getMonth()+1,cd=today.getDate();
-    // חסום חודשים עתידיים לפני ה-10
-    const isFuture=(ty>cy)||(ty===cy&&tm>cm);
-    const isNextMonth=(ty===cy&&tm===cm+1)||(cm===12&&ty===cy+1&&tm===1);
-    if(isFuture&&cd<10){
-      showToast(`⏳ ניתן לעבור לחודש הבא רק מה-10 בחודש (עוד ${10-cd} ימים)`);
-      return;
-    }
-    // חסום לחלוטין מעבר ליותר מחודש אחד קדימה
-    if(isFuture&&!isNextMonth){
-      showToast('⏳ לא ניתן לעבור לחודש עתידי');
+    // חסום מעבר לחודש אחרי החודש התקציבי הנוכחי
+    if(targetKey>budgetKey){
+      showToast(`⏳ ניתן לעבור לחודש הבא רק מה-10 בחודש (עוד ${10-today.getDate()} ימים)`);
       return;
     }
   }
@@ -572,11 +572,9 @@ function onMonthChange(){
   const sel=document.getElementById('month-sel');
   const targetKey=sel.value;
   const today=new Date();
-  const [ty,tm]=targetKey.split('-').map(Number);
-  const cy=today.getFullYear(),cm=today.getMonth()+1,cd=today.getDate();
-  const isFuture=(ty>cy)||(ty===cy&&tm>cm);
-  if(isFuture&&cd<10){
-    showToast(`⏳ ניתן לעבור לחודש הבא רק מה-10 בחודש (עוד ${10-cd} ימים)`);
+  const budgetKey=getBudgetMonthKey(today);
+  if(targetKey>budgetKey){
+    showToast(`⏳ ניתן לעבור לחודש הבא רק מה-10 בחודש (עוד ${10-today.getDate()} ימים)`);
     sel.value=state.currentMonth;
     return;
   }
