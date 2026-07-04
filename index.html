@@ -585,19 +585,22 @@ async function loadMonthData(){
 
 async function applyRecurring(){
   if(!state.recurring||!state.recurring.length)return;
-  const snap=await db.ref(`budget/months/${state.currentMonth}/recurringApplied`).once('value');
-  if(snap.val())return; // כבר הוחל
   const [y,m]=state.currentMonth.split('-').map(Number);
   const today=new Date();
-  const monthDate=new Date(y,m-1,1);
-  if(monthDate>today)return; // חודש עתידי
+  if(new Date(y,m-1,1)>today)return; // חודש עתידי
+
+  // בדוק אם כבר הוחל לחודש זה
+  const snap=await db.ref(`budget/months/${state.currentMonth}/recurringApplied`).once('value');
+  if(snap.val())return;
+
   const updates={};
   state.recurring.forEach(r=>{
     const expId='rec_'+r.id+'_'+state.currentMonth;
     const day=Math.min(r.day||1,28);
     const ts=new Date(y,m-1,day,8,0,0).getTime();
     updates[`budget/months/${state.currentMonth}/expenses/${expId}`]={
-      amount:r.amount,catId:r.catId,desc:r.name+' (קבוע)',ts,recurring:true,payType:'credit'
+      amount:r.amount,catId:r.catId,
+      desc:r.name+' (קבוע)',ts,recurring:true,payType:'credit'
     };
   });
   updates[`budget/months/${state.currentMonth}/recurringApplied`]=true;
@@ -1081,19 +1084,65 @@ function smartParseMulti(text){
 
 let pendingAiExpenses=[];
 
-function aiParse(){
+async function aiParse(){
   const text=document.getElementById('ai-input').value.trim();
   if(!text)return;
   const resultEl=document.getElementById('ai-result');
   resultEl.style.display='none';
+  const btn=document.getElementById('ai-send-btn');
+  btn.textContent='⏳';btn.style.pointerEvents='none';
 
-  const parsed=smartParseMulti(text);
-  if(!parsed.length){
-    resultEl.style.display='block';
-    resultEl.innerHTML=`<span style="color:var(--danger)">❌ לא הצלחתי למצוא סכום. נסה: "250 דלק 180 סופר 90 קפה"</span>`;
-    return;
+  const catList=state.categories.map(c=>`${c.id}="${c.name}"`).join(', ');
+  const prompt=`אתה עוזר תקציב משפחתי. המשתמש כתב: "${text}"
+קטגוריות זמינות: ${catList}
+החזר JSON בלבד (ללא טקסט נוסף), מערך של הוצאות:
+[{"amount":סכום,"catId":"id קטגוריה","desc":"תיאור קצר בעברית","payType":"cash או credit"}]
+חוקים:
+- אשראי/כרטיס/ויזה → credit, מזומן/ביט/עו"ש → cash, ברירת מחדל cash
+- אם יש כמה הוצאות תחזיר כמה אובייקטים במערך
+- תיאור קצר ומדויק בעברית`;
+
+  try{
+    const res=await fetch(WORKER_URL,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({type:'ai_parse',prompt,model:'claude-sonnet-4-6',max_tokens:400})
+    });
+    const data=await res.json();
+    btn.textContent='✨';btn.style.pointerEvents='';
+
+    let parsed=[];
+    try{
+      const raw=(data.result||data.text||'').replace(/```json|```/g,'').trim();
+      parsed=JSON.parse(raw);
+      if(!Array.isArray(parsed))parsed=[parsed];
+    }catch(e){
+      // fallback to local parser
+      parsed=smartParseMulti(text);
+    }
+
+    parsed=parsed.filter(p=>p&&p.amount>0);
+    if(!parsed.length){
+      // fallback
+      parsed=smartParseMulti(text);
+    }
+    if(!parsed.length){
+      resultEl.style.display='block';
+      resultEl.innerHTML=`<span style="color:var(--danger)">❌ לא הצלחתי למצוא סכום. נסה: "250 דלק 180 סופר"</span>`;
+      return;
+    }
+    showAiConfirm(parsed);
+    document.getElementById('ai-input').value='';
+  }catch(e){
+    btn.textContent='✨';btn.style.pointerEvents='';
+    // fallback to local parser on network error
+    const parsed=smartParseMulti(text);
+    if(parsed.length){showAiConfirm(parsed);document.getElementById('ai-input').value='';}
+    else{resultEl.style.display='block';resultEl.innerHTML=`<span style="color:var(--danger)">❌ שגיאת חיבור, נסה שנית</span>`;}
   }
+}
 
+function showAiConfirm(parsed){
   pendingAiExpenses=parsed;
   const rows=parsed.map(p=>{
     const cat=state.categories.find(c=>c.id===p.catId)||state.categories[0];
@@ -1103,7 +1152,6 @@ function aiParse(){
       <div class="ai-cf-row"><span>תיאור:</span><span>${p.desc}</span></div>
     </div>`;
   }).join('');
-
   const total=parsed.reduce((s,p)=>s+p.amount,0);
   document.getElementById('ai-confirm-box').innerHTML=`
     ${rows}
@@ -1111,7 +1159,6 @@ function aiParse(){
     <div style="font-size:11px;color:var(--text-muted);margin-top:.4rem;text-align:center;">לא מדויק? ניתן לשנות ידנית בטופס.</div>
   `;
   document.getElementById('ai-confirm-modal').classList.add('open');
-  document.getElementById('ai-input').value='';
 }
 
 async function confirmAiExpense(){
