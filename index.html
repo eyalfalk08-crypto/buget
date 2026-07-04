@@ -511,7 +511,12 @@ let editingBalanceType=null;
 function getBudgetMonthKey(date){
   const d=date||new Date();
   let y=d.getFullYear(),m=d.getMonth()+1;
-  if(d.getDate()<10){m--;if(m<1){m=12;y--;}}
+  // חודש תקציבי: מה-10 לחודש עד ה-9 לחודש הבא
+  // אם לפני ה-10 — שייך לחודש הקודם
+  if(d.getDate()<10){
+    m--;
+    if(m<1){m=12;y--;}
+  }
   return `${y}-${String(m).padStart(2,'0')}`;
 }
 
@@ -554,24 +559,24 @@ async function loadData(){
   const realCurrentMonth=getBudgetMonthKey(new Date());
   const lastSeenMonth=data.lastSeenMonth||null;
 
+  // תמיד עבור לחודש האמיתי הנוכחי
+  state.currentMonth=realCurrentMonth;
+  document.getElementById('month-sel').value=realCurrentMonth;
+
+  // אם החודש השתנה — הודע
   if(lastSeenMonth&&lastSeenMonth!==realCurrentMonth){
-    // חודש חדש! עדכן Firebase ועבור אוטומטית
     await db.ref('budget/lastSeenMonth').set(realCurrentMonth);
-    state.currentMonth=realCurrentMonth;
-    document.getElementById('month-sel').value=realCurrentMonth;
-    // הצג הודעת מעבר חודש
     setTimeout(()=>{
-      showToast(`🗓️ ברוך הבא לחודש החדש! הוצאות חודש ${MONTHS_HE[parseInt(lastSeenMonth.split('-')[1])-1]} נשמרו בהיסטוריה`);
-      _fireNotif('🗓️ חודש חדש התחיל!',`הוצאות ${MONTHS_HE[parseInt(lastSeenMonth.split('-')[1])-1]} נשמרו. הוצאות קבועות ותשלומים יורדו אוטומטית.`);
+      const prevM=parseInt(lastSeenMonth.split('-')[1])-1;
+      showToast(`🗓️ ברוך הבא לחודש החדש!`);
+      _fireNotif('🗓️ חודש חדש התחיל!',`הוצאות קבועות ותשלומים יורדו אוטומטית.`);
     },1200);
-  } else {
-    // אותו חודש — שמור lastSeenMonth אם לא קיים
-    if(!lastSeenMonth)await db.ref('budget/lastSeenMonth').set(realCurrentMonth);
-    state.currentMonth=realCurrentMonth;
-    document.getElementById('month-sel').value=realCurrentMonth;
+  } else if(!lastSeenMonth){
+    await db.ref('budget/lastSeenMonth').set(realCurrentMonth);
   }
   // ──────────────────────────────────────────────────────────
 
+  await applyRecurringAllMonths();
   await loadMonthData();
   document.getElementById('loading').style.display='none';
 }
@@ -582,6 +587,35 @@ async function loadMonthData(){
   const snap=await db.ref(`budget/months/${state.currentMonth}/expenses`).once('value');
   state.expenses=snap.exists()?Object.entries(snap.val()).map(([id,e])=>({...e,id})):[];
   render();
+}
+
+// החל הוצאות קבועות על כל החודשים הקיימים שחסרות בהם
+async function applyRecurringAllMonths(){
+  if(!state.recurring||!state.recurring.length)return;
+  const snap=await db.ref('budget/months').once('value');
+  const months=snap.val()||{};
+  const today=new Date();
+  const currentKey=getBudgetMonthKey(today);
+
+  for(const monthKey of Object.keys(months)){
+    const [y,m]=monthKey.split('-').map(Number);
+    if(new Date(y,m-1,1)>today)continue; // עתידי
+    const existing=months[monthKey]?.expenses||{};
+    const missing=state.recurring.filter(r=>!existing['rec_'+r.id+'_'+monthKey]);
+    if(!missing.length)continue;
+    const updates={};
+    missing.forEach(r=>{
+      const expId='rec_'+r.id+'_'+monthKey;
+      const day=Math.min(r.day||1,28);
+      const ts=new Date(y,m-1,day,8,0,0).getTime();
+      updates[`budget/months/${monthKey}/expenses/${expId}`]={
+        amount:r.amount,catId:r.catId,
+        desc:r.name+' (קבוע)',ts,recurring:true,payType:'credit'
+      };
+    });
+    updates[`budget/months/${monthKey}/recurringApplied`]=true;
+    await db.ref().update(updates);
+  }
 }
 
 async function applyRecurring(){
