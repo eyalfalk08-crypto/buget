@@ -594,12 +594,19 @@ async function applyRecurringAllMonths(){
   if(!state.recurring||!state.recurring.length)return;
   const snap=await db.ref('budget/months').once('value');
   const months=snap.val()||{};
-  const today=new Date();
-  const currentKey=getBudgetMonthKey(today);
+  const currentKey=getBudgetMonthKey(new Date());
+
+  // הוסף גם את החודש הנוכחי אם לא קיים ב-Firebase
+  if(!months[currentKey])months[currentKey]={};
 
   for(const monthKey of Object.keys(months)){
     const [y,m]=monthKey.split('-').map(Number);
-    if(new Date(y,m-1,1)>today)continue; // עתידי
+    // דלג על חודשים עתידיים — אלא אם זה החודש הנוכחי
+    if(monthKey!==currentKey){
+      const monthStart=new Date(y,m-1,1);
+      const today=new Date();
+      if(monthStart>today)continue;
+    }
     const existing=months[monthKey]?.expenses||{};
     const missing=state.recurring.filter(r=>!existing['rec_'+r.id+'_'+monthKey]);
     if(!missing.length)continue;
@@ -621,17 +628,17 @@ async function applyRecurringAllMonths(){
 async function applyRecurring(){
   if(!state.recurring||!state.recurring.length)return;
   const [y,m]=state.currentMonth.split('-').map(Number);
-  const today=new Date();
-  if(new Date(y,m-1,1)>today)return; // חודש עתידי
-
-  // קרא הוצאות קיימות בחודש זה
+  const currentKey=getBudgetMonthKey(new Date());
+  // דלג על חודשים עתידיים — אלא אם זה החודש התקציבי הנוכחי
+  if(state.currentMonth!==currentKey){
+    const today=new Date();
+    if(new Date(y,m-1,1)>today)return;
+  }
+  // בדוק מה חסר
   const existingSnap=await db.ref(`budget/months/${state.currentMonth}/expenses`).once('value');
   const existing=existingSnap.val()||{};
-
-  // מצא הוצאות קבועות שטרם הוחלו לחודש זה
   const missing=state.recurring.filter(r=>!existing['rec_'+r.id+'_'+state.currentMonth]);
-  if(!missing.length)return; // הכל כבר קיים
-
+  if(!missing.length)return;
   const updates={};
   missing.forEach(r=>{
     const expId='rec_'+r.id+'_'+state.currentMonth;
