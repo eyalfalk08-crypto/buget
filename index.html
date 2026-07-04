@@ -341,7 +341,7 @@ body{font-family:'Heebo',sans-serif;background:var(--bg);color:var(--text);min-h
 
   <!-- HISTORY -->
   <div id="tab-history" style="display:none;">
-    <div class="section-title">חודשים קודמים</div>
+    <div class="section-title">סיכום חודשי</div>
     <div id="history-list"></div>
   </div>
 
@@ -1189,15 +1189,65 @@ async function renderHistory(){
   const snap=await db.ref('budget/months').once('value');
   const months=snap.val()||{};
   const list=document.getElementById('history-list');
-  const keys=Object.keys(months).filter(k=>k!==state.currentMonth).sort().reverse();
+  const keys=Object.keys(months).sort().reverse();
   if(!keys.length){list.innerHTML='<div class="empty"><div class="ei">📅</div><p>אין היסטוריה עדיין</p></div>';return;}
+
   list.innerHTML=keys.map(k=>{
     const exps=months[k].expenses?Object.values(months[k].expenses):[];
-    const total=exps.reduce((s,e)=>s+e.amount,0);
-    const cashTotal=exps.filter(e=>!e.payType||e.payType==='cash').reduce((s,e)=>s+e.amount,0);
-    const creditTotal=exps.filter(e=>e.payType==='credit').reduce((s,e)=>s+e.amount,0);
     const [y,m]=k.split('-');
-    return`<div class="history-month" onclick="jumpToMonth('${k}')"><div class="tx-icon" style="background:#e5e7eb;font-size:18px;">📅</div><div class="tx-info"><div class="tx-name">${MONTHS_HE[parseInt(m)-1]} ${y}</div><div class="tx-cat">${exps.length} הוצאות · 💵 ₪${cashTotal.toLocaleString('he-IL')} · 💳 ₪${creditTotal.toLocaleString('he-IL')}</div></div><div class="tx-amount" style="color:var(--text);">₪${total.toLocaleString('he-IL')}</div></div>`;
+    const monthLabel=`${MONTHS_HE[parseInt(m)-1]} ${y}`;
+    const isCurrent=k===state.currentMonth;
+
+    // פילוח הוצאות
+    const cashExps=exps.filter(e=>!e.payType||e.payType==='cash');
+    const creditExps=exps.filter(e=>e.payType==='credit');
+    const recurringExps=creditExps.filter(e=>e.recurring);
+    const installmentExps=creditExps.filter(e=>e.installmentId);
+    const regularCreditExps=creditExps.filter(e=>!e.recurring&&!e.installmentId);
+
+    const cashTotal=cashExps.reduce((s,e)=>s+e.amount,0);
+    const creditTotal=creditExps.reduce((s,e)=>s+e.amount,0);
+    const recurringTotal=recurringExps.reduce((s,e)=>s+e.amount,0);
+    const installmentTotal=installmentExps.reduce((s,e)=>s+e.amount,0);
+    const regularCreditTotal=regularCreditExps.reduce((s,e)=>s+e.amount,0);
+    const grandTotal=cashTotal+creditTotal;
+
+    return`<div style="background:white;border-radius:14px;box-shadow:var(--shadow);margin-bottom:.8rem;overflow:hidden;${isCurrent?'border:2px solid var(--primary)':''}">
+      <div style="display:flex;align-items:center;padding:.9rem 1rem;cursor:pointer;gap:.7rem;" onclick="jumpToMonth('${k}')">
+        <div style="font-size:20px;">📅</div>
+        <div style="flex:1;">
+          <div style="font-size:14px;font-weight:800;">${monthLabel} ${isCurrent?'<span style="font-size:10px;background:var(--primary);color:white;padding:2px 7px;border-radius:10px;margin-right:4px;">נוכחי</span>':''}</div>
+          <div style="font-size:11px;color:var(--text-muted);">${exps.length} הוצאות סה"כ</div>
+        </div>
+        <div style="text-align:left;font-size:17px;font-weight:900;color:var(--danger);">₪${grandTotal.toLocaleString('he-IL')}</div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);">
+        <div style="background:#f0f9ff;padding:.7rem 1rem;">
+          <div style="font-size:10px;font-weight:700;color:var(--cash);margin-bottom:3px;">💵 מזומן</div>
+          <div style="font-size:16px;font-weight:900;color:var(--cash);">₪${cashTotal.toLocaleString('he-IL')}</div>
+          <div style="font-size:10px;color:var(--text-muted);">${cashExps.length} הוצאות</div>
+        </div>
+        <div style="background:#faf5ff;padding:.7rem 1rem;">
+          <div style="font-size:10px;font-weight:700;color:var(--credit);margin-bottom:3px;">💳 אשראי סה"כ</div>
+          <div style="font-size:16px;font-weight:900;color:var(--credit);">₪${creditTotal.toLocaleString('he-IL')}</div>
+          <div style="font-size:10px;color:var(--text-muted);">${creditExps.length} הוצאות</div>
+        </div>
+      </div>
+      ${creditTotal>0?`<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;background:var(--border);">
+        <div style="background:white;padding:.6rem .8rem;text-align:center;">
+          <div style="font-size:9px;font-weight:700;color:var(--text-muted);margin-bottom:2px;">🔄 קבועות</div>
+          <div style="font-size:13px;font-weight:800;color:var(--text);">₪${recurringTotal.toLocaleString('he-IL')}</div>
+        </div>
+        <div style="background:white;padding:.6rem .8rem;text-align:center;">
+          <div style="font-size:9px;font-weight:700;color:var(--text-muted);margin-bottom:2px;">📦 תשלומים</div>
+          <div style="font-size:13px;font-weight:800;color:var(--text);">₪${installmentTotal.toLocaleString('he-IL')}</div>
+        </div>
+        <div style="background:white;padding:.6rem .8rem;text-align:center;">
+          <div style="font-size:9px;font-weight:700;color:var(--text-muted);margin-bottom:2px;">🛒 רגיל</div>
+          <div style="font-size:13px;font-weight:800;color:var(--text);">₪${regularCreditTotal.toLocaleString('he-IL')}</div>
+        </div>
+      </div>`:''}
+    </div>`;
   }).join('');
 }
 
