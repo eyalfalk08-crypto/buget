@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-title" content="תקציב">
 <link rel="apple-touch-icon" href="https://cdn.jsdelivr.net/npm/emoji-datasource-apple/img/apple/64/1f4b0.png">
 <meta name="theme-color" content="#2d6a4f">
-<script>   
+<script>
 // Inject manifest dynamically — no separate file needed
 const manifest={name:'תקציב משפחתי',short_name:'תקציב',start_url:location.pathname,scope:location.pathname.replace(/[^/]*$/,''),display:'standalone',background_color:'#1b4332',theme_color:'#2d6a4f',dir:'rtl',lang:'he',icons:[{src:'https://cdn.jsdelivr.net/npm/emoji-datasource-apple/img/apple/64/1f4b0.png',sizes:'64x64',type:'image/png'},{src:'https://cdn.jsdelivr.net/npm/emoji-datasource-apple/img/apple/128/1f4b0.png',sizes:'128x128',type:'image/png'}]};
 const blob=new Blob([JSON.stringify(manifest)],{type:'application/manifest+json'});
@@ -325,6 +325,16 @@ body{font-family:'Heebo',sans-serif;background:var(--bg);color:var(--text);min-h
         <div class="form-group">
           <label>יום חיוב בחודש</label>
           <input type="number" id="inst-day" placeholder="1" min="1" max="28" value="1">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>חודש התחלה</label>
+          <select id="inst-start-month"></select>
+        </div>
+        <div class="form-group">
+          <label>תשלום נוכחי מספר</label>
+          <input type="number" id="inst-paid" placeholder="1" inputmode="numeric" min="1" value="1" oninput="calcInstallment()">
         </div>
       </div>
       <!-- Live preview -->
@@ -1359,17 +1369,36 @@ function renderInstallmentCatSelect(){
   const opts=state.categories.map(c=>`<option value="${c.id}">${c.emoji||''} ${c.name}</option>`).join('');
   const sel=document.getElementById('inst-cat');
   if(sel)sel.innerHTML=opts;
+  // populate start month select
+  const msel=document.getElementById('inst-start-month');
+  if(msel){
+    msel.innerHTML='';
+    const now=new Date();
+    // הצג 24 חודשים אחורה עד 3 חודשים קדימה
+    for(let i=-24;i<=3;i++){
+      const d=new Date(now.getFullYear(),now.getMonth()+i,1);
+      const y=d.getFullYear(),m=d.getMonth()+1;
+      const key=`${y}-${String(m).padStart(2,'0')}`;
+      const opt=document.createElement('option');
+      opt.value=key;
+      opt.textContent=`${MONTHS_HE[m-1]} ${y}`;
+      if(i===0)opt.selected=true;
+      msel.appendChild(opt);
+    }
+  }
 }
 
 function calcInstallment(){
   const total=parseFloat(document.getElementById('inst-total').value)||0;
   const count=parseInt(document.getElementById('inst-count').value)||0;
+  const paid=parseInt(document.getElementById('inst-paid').value)||1;
   const preview=document.getElementById('inst-preview');
   const previewText=document.getElementById('inst-preview-text');
   if(total>0&&count>1){
     const monthly=Math.ceil(total/count);
+    const remaining=count-paid+1;
     preview.style.display='block';
-    previewText.innerHTML=`₪${monthly.toLocaleString('he-IL')} לחודש × ${count} חודשים = ₪${(monthly*count).toLocaleString('he-IL')} סה"כ`;
+    previewText.innerHTML=`₪${monthly.toLocaleString('he-IL')} לחודש × ${count} חודשים<br>נותרו ${remaining} תשלומים · ₪${(remaining*monthly).toLocaleString('he-IL')} לתשלום`;
   } else {
     preview.style.display='none';
   }
@@ -1381,21 +1410,20 @@ async function addInstallment(){
   const count=parseInt(document.getElementById('inst-count').value);
   const catId=document.getElementById('inst-cat').value;
   const day=parseInt(document.getElementById('inst-day').value)||1;
+  const startMonth=document.getElementById('inst-start-month').value||state.currentMonth;
+  const paidCount=Math.max(0,(parseInt(document.getElementById('inst-paid').value)||1)-1);
+
   if(!name){showToast('יש להכניס שם לרכישה');return;}
   if(!total||total<=0){showToast('יש להכניס סכום');return;}
   if(!count||count<2){showToast('מספר תשלומים חייב להיות לפחות 2');return;}
 
   const monthly=Math.ceil(total/count);
-  // Start from current month
-  const [y,m]=state.currentMonth.split('-').map(Number);
-  const startDate=new Date(y,m-1,1);
-
   const id='inst_'+Date.now();
   const inst={
     id,name,total,count,monthly,catId,day,
-    startMonth:state.currentMonth,
-    paidCount:0,
-    active:true,
+    startMonth,
+    paidCount,
+    active:paidCount<count,
     createdTs:Date.now()
   };
 
@@ -1403,14 +1431,24 @@ async function addInstallment(){
   state.installments.push(inst);
   await db.ref(`budget/installments/${id}`).set(inst);
 
-  // Apply first payment immediately to current month
-  await applyInstallmentPayment(inst,state.currentMonth,1);
+  // החל תשלום לחודש הנוכחי אם צריך
+  const [sy,sm]=startMonth.split('-').map(Number);
+  const [cy,cm]=state.currentMonth.split('-').map(Number);
+  const monthsDiff=(cy-sy)*12+(cm-sm);
+  const currentPaymentNum=monthsDiff+1;
+  if(currentPaymentNum>paidCount&&currentPaymentNum<=count){
+    await applyInstallmentPayment(inst,state.currentMonth,currentPaymentNum);
+    inst.paidCount=currentPaymentNum;
+    if(currentPaymentNum>=count)inst.active=false;
+  }
 
   document.getElementById('inst-name').value='';
   document.getElementById('inst-total').value='';
   document.getElementById('inst-count').value='';
+  document.getElementById('inst-paid').value='1';
   document.getElementById('inst-preview').style.display='none';
   renderInstallments();
+  await loadMonthData();
   showToast(`✅ "${name}" — ${count} תשלומים של ₪${monthly.toLocaleString('he-IL')}`);
 }
 
