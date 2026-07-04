@@ -743,10 +743,17 @@ function renderCatManage(){
 function renderRecurring(){
   const list=document.getElementById('recurring-list');
   if(!state.recurring.length){list.innerHTML='<div class="empty"><div class="ei">🔄</div><p>אין הוצאות קבועות עדיין</p></div>';return;}
-  list.innerHTML=state.recurring.map(r=>{
+  const total=state.recurring.reduce((s,r)=>s+r.amount,0);
+  const summary=`<div style="background:linear-gradient(135deg,var(--credit),#7c3aed);border-radius:12px;padding:.9rem 1.1rem;margin-bottom:.8rem;display:flex;justify-content:space-between;align-items:center;">
+    <div>
+      <div style="font-size:11px;color:rgba(255,255,255,.8);font-weight:700;">סה"כ הוצאות קבועות חודשיות</div>
+      <div style="font-size:10px;color:rgba(255,255,255,.65);">${state.recurring.length} הוצאות · 💳 אשראי</div>
+    </div>
+    <div style="font-size:24px;font-weight:900;color:white;">₪${total.toLocaleString('he-IL')}</div>
+  </div>`;
+  list.innerHTML=summary+state.recurring.map(r=>{
     const cat=state.categories.find(c=>c.id===r.catId)||{name:'שונות',emoji:'📦'};
-    const payBadge=r.payType==='credit'?'<span class="pay-badge credit">💳</span>':'<span class="pay-badge cash">💵</span>';
-    return `<div class="rec-item"><div class="ri">${cat.emoji||'📦'}</div><div class="rn"><div class="rname">${r.name} ${payBadge}</div><div class="rcat">${cat.name} · יום ${r.day||1} בחודש</div></div><div class="ramount">₪${r.amount.toLocaleString('he-IL')}</div><button class="rdel" onclick="deleteRecurring('${r.id}')">✕</button></div>`;
+    return `<div class="rec-item"><div class="ri">${cat.emoji||'📦'}</div><div class="rn"><div class="rname">${r.name}</div><div class="rcat">${cat.name} · יום ${r.day||1} בחודש</div></div><div class="ramount">₪${r.amount.toLocaleString('he-IL')}</div><button class="rdel" onclick="deleteRecurring('${r.id}')">✕</button></div>`;
   }).join('');
 }
 
@@ -1451,9 +1458,26 @@ function renderInstallments(){
     list.innerHTML='<div class="empty"><div class="ei">💳</div><p>אין תשלומים פעילים</p></div>';
     return;
   }
-  // Sort: active first
+  const activeInsts=insts.filter(i=>i.active);
+  const monthlyTotal=activeInsts.reduce((s,i)=>s+i.monthly,0);
+  const totalRemaining=activeInsts.reduce((s,i)=>s+(i.count-i.paidCount)*i.monthly,0);
+
+  const summary=`<div style="background:linear-gradient(135deg,var(--credit),#7c3aed);border-radius:12px;padding:.9rem 1.1rem;margin-bottom:.8rem;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem;">
+      <div>
+        <div style="font-size:11px;color:rgba(255,255,255,.8);font-weight:700;">סה"כ תשלומים חודשיים</div>
+        <div style="font-size:10px;color:rgba(255,255,255,.65);">${activeInsts.length} תוכניות פעילות</div>
+      </div>
+      <div style="font-size:24px;font-weight:900;color:white;">₪${monthlyTotal.toLocaleString('he-IL')}</div>
+    </div>
+    <div style="background:rgba(255,255,255,.15);border-radius:8px;padding:.5rem .8rem;display:flex;justify-content:space-between;align-items:center;">
+      <div style="font-size:10px;color:rgba(255,255,255,.8);">יתרה לתשלום עד סיום</div>
+      <div style="font-size:13px;font-weight:800;color:white;">₪${totalRemaining.toLocaleString('he-IL')}</div>
+    </div>
+  </div>`;
+
   const sorted=[...insts].sort((a,b)=>(b.active?1:0)-(a.active?1:0)||b.createdTs-a.createdTs);
-  list.innerHTML=sorted.map(inst=>{
+  list.innerHTML=summary+sorted.map(inst=>{
     const cat=state.categories.find(c=>c.id===inst.catId)||{name:'שונות',emoji:'📦'};
     const pct=Math.round(inst.paidCount/inst.count*100);
     const remaining=inst.count-inst.paidCount;
