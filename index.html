@@ -590,12 +590,16 @@ async function applyRecurring(){
   const today=new Date();
   if(new Date(y,m-1,1)>today)return; // חודש עתידי
 
-  // בדוק אם כבר הוחל לחודש זה
-  const snap=await db.ref(`budget/months/${state.currentMonth}/recurringApplied`).once('value');
-  if(snap.val())return;
+  // קרא הוצאות קיימות בחודש זה
+  const existingSnap=await db.ref(`budget/months/${state.currentMonth}/expenses`).once('value');
+  const existing=existingSnap.val()||{};
+
+  // מצא הוצאות קבועות שטרם הוחלו לחודש זה
+  const missing=state.recurring.filter(r=>!existing['rec_'+r.id+'_'+state.currentMonth]);
+  if(!missing.length)return; // הכל כבר קיים
 
   const updates={};
-  state.recurring.forEach(r=>{
+  missing.forEach(r=>{
     const expId='rec_'+r.id+'_'+state.currentMonth;
     const day=Math.min(r.day||1,28);
     const ts=new Date(y,m-1,day,8,0,0).getTime();
