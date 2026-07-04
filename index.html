@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="he" dir="rtl">
-<head>  
-<meta charset="UTF-8">   
+<head>
+<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -385,6 +385,7 @@ body{font-family:'Heebo',sans-serif;background:var(--bg);color:var(--text);min-h
 
     <div class="section-title" style="margin-top:1.2rem;">ניהול חודש</div>
     <button class="reset-btn" onclick="resetMonth()">🔄 עבור לחודש הנוכחי</button>
+    <button class="reset-btn" onclick="reapplyRecurring()" style="margin-top:.5rem;border-color:var(--primary);color:var(--primary);">🔄 החל הוצאות קבועות מחדש</button>
     <button class="reset-btn" onclick="openResetMonthModal()" style="margin-top:.5rem;border-color:#e63946;color:#e63946;">🗑️ איפוס נתוני חודש</button>
   </div>
 
@@ -1190,6 +1191,28 @@ async function renderHistory(){
 function jumpToMonth(key){
   document.getElementById('month-sel').value=key;state.currentMonth=key;
   loadMonthData();switchTab('overview');
+}
+
+async function reapplyRecurring(){
+  if(!confirm('למחוק את דגל ה"הוחל" ולהחיל מחדש את ההוצאות הקבועות לחודש הנוכחי?'))return;
+  // מחק את הדגל
+  await db.ref(`budget/months/${state.currentMonth}/recurringApplied`).remove();
+  // מחק הוצאות קבועות קיימות לחודש זה
+  const snap=await db.ref(`budget/months/${state.currentMonth}/expenses`).once('value');
+  if(snap.exists()){
+    const updates={};
+    Object.keys(snap.val()).forEach(k=>{
+      if(k.startsWith('rec_'))updates[`budget/months/${state.currentMonth}/expenses/${k}`]=null;
+    });
+    if(Object.keys(updates).length)await db.ref().update(updates);
+  }
+  // החל מחדש
+  await applyRecurring();
+  // רענן
+  const snap2=await db.ref(`budget/months/${state.currentMonth}/expenses`).once('value');
+  state.expenses=snap2.exists()?Object.entries(snap2.val()).map(([id,e])=>({...e,id})):[];
+  render();
+  showToast('✅ הוצאות קבועות הוחלו מחדש!');
 }
 
 async function resetMonth(){
