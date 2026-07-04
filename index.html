@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="he" dir="rtl">
 <head>
-<meta charset="UTF-8">   
+<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -545,7 +545,6 @@ function changeMonth(dir){
 function onMonthChange(){state.currentMonth=document.getElementById('month-sel').value;loadMonthData();}
 
 async function loadData(){
-  buildMonthOptions();
   const snap=await db.ref('budget').once('value');
   const data=snap.val()||{};
   state.income=data.income||{me:0,wife:0};
@@ -555,26 +554,24 @@ async function loadData(){
   state.balance=data.balance||{cash:0,creditLimit:0};
   if(!data.categories)await db.ref('budget/categories').set(Object.fromEntries(DEFAULT_CATS.map(c=>[c.id,c])));
 
-  // ── בדיקת מעבר חודש אוטומטי ──────────────────────────────
+  // תמיד חשב חודש נוכחי מהתאריך האמיתי — לא מ-Firebase
   const realCurrentMonth=getBudgetMonthKey(new Date());
-  const lastSeenMonth=data.lastSeenMonth||null;
-
-  // תמיד עבור לחודש האמיתי הנוכחי
   state.currentMonth=realCurrentMonth;
-  document.getElementById('month-sel').value=realCurrentMonth;
 
-  // אם החודש השתנה — הודע
-  if(lastSeenMonth&&lastSeenMonth!==realCurrentMonth){
+  // עדכן Firebase אם שונה
+  if(data.lastSeenMonth!==realCurrentMonth){
     await db.ref('budget/lastSeenMonth').set(realCurrentMonth);
-    setTimeout(()=>{
-      const prevM=parseInt(lastSeenMonth.split('-')[1])-1;
-      showToast(`🗓️ ברוך הבא לחודש החדש!`);
-      _fireNotif('🗓️ חודש חדש התחיל!',`הוצאות קבועות ותשלומים יורדו אוטומטית.`);
-    },1200);
-  } else if(!lastSeenMonth){
-    await db.ref('budget/lastSeenMonth').set(realCurrentMonth);
+    if(data.lastSeenMonth){
+      setTimeout(()=>{
+        showToast('🗓️ ברוך הבא לחודש החדש!');
+        _fireNotif('🗓️ חודש חדש התחיל!','הוצאות קבועות ותשלומים יורדו אוטומטית.');
+      },1200);
+    }
   }
-  // ──────────────────────────────────────────────────────────
+
+  // בנה אפשרויות חודש ובחר את הנוכחי
+  buildMonthOptions();
+  document.getElementById('month-sel').value=realCurrentMonth;
 
   await applyRecurringAllMonths();
   await loadMonthData();
