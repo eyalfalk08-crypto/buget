@@ -1507,6 +1507,18 @@ function renderInstallments(){
         <span>סה"כ רכישה: ₪${inst.total.toLocaleString('he-IL')}</span>
         <span>${pct}% שולם</span>
       </div>
+      ${(()=>{
+        // חשב חודש התחלה וסיום
+        const [sy,sm]=inst.startMonth.split('-').map(Number);
+        const startLabel=`${MONTHS_HE[sm-1]} ${sy}`;
+        let ey=sy,em=sm+inst.count-1;
+        while(em>12){em-=12;ey++;}
+        const endLabel=`${MONTHS_HE[em-1]} ${ey}`;
+        return`<div style="background:var(--bg);border-radius:7px;padding:.4rem .7rem;margin-top:.4rem;display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);">
+          <span>📅 התחיל: <strong>${startLabel}</strong></span>
+          <span>🏁 מסתיים: <strong>${endLabel}</strong></span>
+        </div>`;
+      })()}
       <button onclick="window.deleteInstallment('${inst.id}')" style="margin-top:.6rem;width:100%;padding:9px;background:#fee2e2;color:var(--danger);border:1.5px solid #fca5a5;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;font-family:'Heebo',sans-serif;">🗑️ ${inst.active?'בטל תשלומים':'מחק מהרשימה'}</button>
     </div>`;
   }).join('');
