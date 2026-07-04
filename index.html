@@ -1601,26 +1601,15 @@ async function deleteInstallment(id){
   const inst=state.installments.find(i=>i.id===id);
   if(!inst)return;
 
-  if(!inst.active){
-    // הסתיים — רק מחק מהרשימה המקומית
-    if(!confirm(`למחוק את "${inst.name}" מהרשימה?`))return;
-    await db.ref(`budget/installments/${id}`).remove();
-    state.installments=state.installments.filter(i=>i.id!==id);
-    renderInstallments();
-    showToast('✅ נמחק מהרשימה');
-    return;
-  }
+  if(!confirm(`למחוק את "${inst.name}" ואת כל ההוצאות שלו מכל החודשים?`))return;
 
-  // פעיל — בטל תשלומים עתידיים
-  if(!confirm(`לבטל את תוכנית התשלומים "${inst.name}"?\nתשלומים שכבר נרשמו יישארו.`))return;
+  // מחק מ-Firebase את ההגדרה
+  await db.ref(`budget/installments/${id}`).remove();
 
-  inst.active=false;
-  await db.ref(`budget/installments/${id}`).update({active:false});
-
-  // מחק תשלומים עתידיים מ-Firebase
+  // מחק את כל ההוצאות מכל החודשים (מתחילה ועד סוף)
   const [sy,sm]=inst.startMonth.split('-').map(Number);
   const updates={};
-  for(let i=inst.paidCount;i<inst.count;i++){
+  for(let i=0;i<inst.count;i++){
     let y=sy,m=sm+i;
     while(m>12){m-=12;y++;}
     const mk=`${y}-${String(m).padStart(2,'0')}`;
@@ -1628,15 +1617,16 @@ async function deleteInstallment(id){
   }
   if(Object.keys(updates).length)await db.ref().update(updates);
 
-  state.installments=state.installments.map(i=>i.id===id?{...i,active:false}:i);
+  // עדכן state
+  state.installments=state.installments.filter(i=>i.id!==id);
 
-  // רענן הוצאות
+  // רענן הוצאות החודש הנוכחי
   const snap=await db.ref(`budget/months/${state.currentMonth}/expenses`).once('value');
   state.expenses=snap.exists()?Object.entries(snap.val()).map(([eid,e])=>({...e,id:eid})):[];
 
   renderInstallments();
   render();
-  showToast(`✅ תוכנית "${inst.name}" בוטלה`);
+  showToast(`✅ "${inst.name}" נמחק מכל החודשים`);
 }
 window.deleteInstallment=deleteInstallment;
 window.deleteExpense=deleteExpense;
