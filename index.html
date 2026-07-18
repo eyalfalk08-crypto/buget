@@ -18,6 +18,7 @@ const blob=new Blob([JSON.stringify(manifest)],{type:'application/manifest+json'
 const link=document.createElement('link');link.rel='manifest';link.href=URL.createObjectURL(blob);document.head.appendChild(link);
 </script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700;900&display=swap');
@@ -120,6 +121,7 @@ body{font-family:'Heebo',sans-serif;background:var(--bg);color:var(--text);min-h
 .empty{text-align:center;padding:2rem 1rem;color:var(--text-muted);}
 .empty .ei{font-size:36px;margin-bottom:.6rem;}
 .empty p{font-size:13px;font-weight:500;}
+.app-copyright{text-align:center;font-size:11px;color:var(--text-muted);padding:1.5rem 1rem 1rem;opacity:.7;}
 .cat-manage-item{display:flex;align-items:center;gap:.5rem;padding:.6rem .8rem;background:var(--bg);border-radius:10px;margin-bottom:.3rem;}
 .cat-manage-item .ce{font-size:18px;width:28px;text-align:center;}
 .cat-manage-item .cn{flex:1;font-size:13px;font-weight:600;}
@@ -399,6 +401,8 @@ body{font-family:'Heebo',sans-serif;background:var(--bg);color:var(--text);min-h
     <button class="reset-btn" onclick="openResetMonthModal()" style="margin-top:.5rem;border-color:#e63946;color:#e63946;">🗑️ איפוס נתוני חודש</button>
   </div>
 
+  <div class="app-copyright">© כל הזכויות שמורות לאיל פלק</div>
+
 </div>
 
 <div class="modal" id="reset-month-modal">
@@ -492,6 +496,8 @@ body{font-family:'Heebo',sans-serif;background:var(--bg);color:var(--text);min-h
 const firebaseConfig={apiKey:"AIzaSyDyTN8H7FwyhA9wjsEH97fwJB2TGJgEfpA",authDomain:"work-system-73906.firebaseapp.com",databaseURL:"https://work-system-73906-default-rtdb.europe-west1.firebasedatabase.app",projectId:"work-system-73906",storageBucket:"work-system-73906.firebasestorage.app",messagingSenderId:"227399680422",appId:"1:227399680422:web:4911726e11a17572b40f67"};
 firebase.initializeApp(firebaseConfig);
 const db=firebase.database();
+let auth=null;
+try{ auth=firebase.auth(); }catch(e){}
 
 const DEFAULT_CATS=[
   {id:'food',name:'מזון וקניות',emoji:'🛒',budget:3000,color:'#2d6a4f'},
@@ -1800,7 +1806,30 @@ function buildNotifMessage(amount,cat,catSpentAfter,payType){
 updateNotifUI();
 // ─────────────────────────────────────────────────────────────
 
-loadData();
+// ── התחברות אנונימית ל-Firebase לפני טעינת נתונים ──────────────
+let _appStarted=false;
+function startAppOnce(){
+  if(_appStarted)return;
+  _appStarted=true;
+  loadData();
+}
+if(auth){
+  var _authAttempts=0, _authOk=false;
+  auth.onAuthStateChanged(function(user){ if(user){_authOk=true;startAppOnce();} });
+  function _tryAnonSignIn(){
+    if(_authOk) return;
+    _authAttempts++;
+    auth.signInAnonymously().catch(function(e){
+      console.error('כניסה אנונימית נכשלה (ניסיון '+_authAttempts+')',e);
+      // רשת סלולרית איטית — ננסה שוב לפני שנוותר
+      if(_authAttempts<5 && !_authOk){ setTimeout(_tryAnonSignIn,3000); }
+    });
+  }
+  _tryAnonSignIn();
+  setTimeout(startAppOnce,45000); // רשת אבטחה — סבלנות ארוכה לרשתות איטיות
+} else {
+  startAppOnce();
+}
 </script>
 </body>
 </html>
